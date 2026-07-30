@@ -1,0 +1,49 @@
+#!/bin/sh
+
+set -e
+
+. /etc/dbconfig-common/sreview-master.conf
+
+if [ $dbc_dbtype = "none" ];
+then
+	exit # User wants do things manually
+fi
+
+[ $dbc_dbtype = "pgsql" ] # we can't work with anything but postgres
+
+dbistring="dbi:Pg:dbname='$dbc_dbname'"
+
+if [ ! -z "$dbc_dbuser" ]
+then
+	dbistring="$dbistring;user='$dbc_dbuser'"
+fi
+
+if [ ! -z "$dbc_dbpass" ]
+then
+	dbistring="$dbistring;password='$dbc_dbpass'"
+fi
+
+if [ ! -z "$dbc_dbserver" ]
+then
+	dbistring="$dbistring;host='$dbc_dbserver'"
+fi
+
+if [ ! -z "$dbc_dbport" ]
+then
+	dbistring="$dbistring;host='$dbc_dbport'"
+fi
+
+if [ "$dbc_ssl" = "true" ]
+then
+	dbistring="$dbistring;sslmode=require"
+fi
+
+if [ "$dbc_authmethod_admin" = "ident" ]
+then
+	su - $dbc_dbadmin -c "psql $dbc_dbname -c 'create extension if not exists pgcrypto; create extension if not exists plpgsql'"
+else
+	psql -U $dbc_dbadmin $dbc_dbname -c 'create extension if not exists pgcrypto; create extension if not exists plpgsql'
+fi
+
+sreview-config --set=dbistring="$dbistring" --action=update
+sreview-config --action=initdb

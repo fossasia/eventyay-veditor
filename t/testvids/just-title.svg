@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   xmlns:dc="http://purl.org/dc/elements/1.1/"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   width="854"
+   height="480"
+   viewBox="0 0 854 480"
+   version="1.1"
+   id="SVGRoot"
+   inkscape:version="0.92.2 (5c3e80d, 2017-08-06)"
+   sodipodi:docname="just-title.svg">
+  <sodipodi:namedview
+     id="base"
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1.0"
+     inkscape:pageopacity="0.0"
+     inkscape:pageshadow="2"
+     inkscape:zoom="0.73525857"
+     inkscape:cx="427"
+     inkscape:cy="240"
+     inkscape:document-units="px"
+     inkscape:current-layer="layer1"
+     showgrid="false" />
+  <defs
+     id="defs3771" />
+  <metadata
+     id="metadata3774">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type
+           rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+        <dc:title></dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <g
+     id="layer1"
+     inkscape:groupmode="layer"
+     inkscape:label="Laag 1">
+    <rect
+       style="fill:#ffffff;fill-opacity:1;stroke-width:1.28505194;stroke-miterlimit:4;stroke-dasharray:none"
+       id="rect3822"
+       width="878.79218"
+       height="490.24911"
+       x="-8.5409222"
+       y="-2.5622604" />
+    <flowRoot
+       xml:space="preserve"
+       id="flowRoot3787"
+       style="font-style:normal;font-weight:normal;font-size:40px;line-height:25px;font-family:Sans;letter-spacing:0px;word-spacing:0px;fill:#000000;fill-opacity:1;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+       transform="translate(108.31055,24.512695)"><flowRegion
+         id="flowRegion3789"><rect
+           id="rect3791"
+           width="257.93594"
+           height="64.911034"
+           x="224.62633"
+           y="154.59074" /></flowRegion><flowPara
+         id="flowPara3793">@TITLE@</flowPara></flowRoot>    <flowRoot
+       xml:space="preserve"
+       id="flowRoot3795"
+       style="font-style:normal;font-weight:normal;font-size:40px;line-height:25px;font-family:Sans;letter-spacing:0px;word-spacing:0px;fill:#000000;fill-opacity:1;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+       transform="translate(45.542969,24.512695)"><flowRegion
+         id="flowRegion3797"><rect
+           id="rect3799"
+           width="289.53735"
+           height="45.266903"
+           x="247.68683"
+           y="252.81139" /></flowRegion><flowPara
+         id="flowPara3801">@DATE@</flowPara></flowRoot>  </g>
+</svg>

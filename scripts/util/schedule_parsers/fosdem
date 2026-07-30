@@ -1,0 +1,126 @@
+#!/usr/bin/perl
+
+# SReview, a web-based video review and transcoding system
+# Copyright (c) 2016-2018, Wouter Verhelst <w@uter.be>
+#
+# SReview is free software: you can redistribute it and/or modify it
+# under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public
+# License along with this program.  If not, see
+# <http://www.gnu.org/licenses/>.
+
+use XML::Simple qw(:strict);
+use DBI;
+
+use SReview::Config::Common;
+
+my $config = SReview::Config::Common::setup;
+
+my $dbh = DBI->connect($config->get('dbistring'), '', '') or die "Cannot connect to database!";
+
+open SCHEDULE, "curl -s https://fosdem.org/2019/schedule/xml|";
+
+my $schedule = "";
+
+while(<SCHEDULE>) {
+	$schedule .= $_;
+}
+
+my $xml = XMLin($schedule, ForceArray => ["conference", "room", "event", "day", "person"], KeyAttr => { event => 'id' });
+
+$dbh->begin_work;
+
+my $st = $dbh->prepare("SELECT id FROM events WHERE name = ?");
+
+do {
+	$st->execute($xml->{conference}[0]{title});
+
+	if($st->rows != 1) {
+		my $ins = $dbh->prepare("INSERT INTO events(name) VALUES(?)");
+		$ins->execute($xml->{conference}[0]{title}) or die;
+	}
+} while($st->rows != 1);
+
+my $row = $st->fetchrow_arrayref;
+my $eventid = $row->[0];
+
+my $dbroom = $dbh->prepare("SELECT id FROM rooms WHERE name = ?");
+my $dbpers = $dbh->prepare("SELECT id FROM speakers WHERE upstreamid = ?");
+
+my $track_ex = $dbh->prepare("SELECT id FROM tracks WHERE name = ?");
+my $track_add = $dbh->prepare("INSERT INTO tracks(name) VALUES (?)");
+
+foreach my $day(@{$xml->{day}}) {
+	foreach my $room(@{$day->{room}}) {
+		do {
+			$dbroom->execute($room->{'name'});
+
+			if($dbroom->rows < 1) {
+				my $ins = $dbh->prepare("INSERT INTO rooms(name) VALUES (?)");
+				$ins->execute($room->{'name'}) or die;
+			}
+		} while($dbroom->rows < 1);
+		$row = $dbroom->fetchrow_arrayref;
+		my $roomid = $row->[0];
+		foreach my $talk_upid(keys %{$room->{event}}) {
+			$talk = $room->{event}{$talk_upid};
+			do {
+				$track_ex->execute($talk->{track});
+
+				if($track_ex->rows < 1) {
+					$track_add->execute($talk->{track}) or die;
+				}
+			} while($track_ex->rows < 1);
+			my $track_row = $track_ex->fetchrow_arrayref;
+			my $talk_st = $dbh->prepare("SELECT id FROM talks WHERE upstreamid = ? AND event = ?");
+			$talk_st->execute($talk_upid, $eventid);
+			if($talk_st->rows < 1) {
+				$talk_st = $dbh->prepare("INSERT INTO talks (room, slug, starttime, endtime, title, subtitle, event, track, description, upstreamid) VALUES (?, ?, ?::timestamptz, ?::timestamptz + ?::interval, ?, ?, ?, ?, ?, ?)");
+			} else {
+				$talk_st = $dbh->prepare("UPDATE talks SET room = ?, slug = ?, starttime = ?::timestamptz, endtime = ?::timestamptz + ?::interval, title = ?, subtitle = ?, event = ?, track = ?, description = ? WHERE upstreamid = ?");
+			}
+			my $starttime = $day->{date} . " " . $talk->{start} . ":00+01";
+			my $trackid = $track_row->[0];
+			my $subtitle = $talk->{subtitle};
+			if(ref($subtitle) eq 'HASH') {
+				$subtitle = undef;
+			}
+			my $title = $talk->{title};
+			my $description = "";
+			if(ref(\$talk->{abstract}) eq 'SCALAR') {
+				$description .= $talk->{abstract};
+			}
+			if(ref(\$talk->{description}) eq 'SCALAR') {
+				$description .= $talk->{description};
+			}
+			$title =~ s/AMENDMENT\s*//;
+			$talk_st->execute($roomid, $talk->{slug}, $starttime, $starttime, $talk->{duration}, $title, $subtitle, $eventid, $trackid, $description, $talk_upid);
+			my $clean = $dbh->prepare("DELETE FROM speakers_talks WHERE talk IN (SELECT id FROM talks WHERE upstreamid = ?)");
+			$clean->execute($talk_upid);
+			foreach my $person(@{$talk->{persons}{person}}) {
+				do {
+					$dbpers->execute($person->{id});
+
+					if($dbpers->rows < 1) {
+						my $ins = $dbh->prepare("INSERT INTO speakers(name, upstreamid) VALUES (?, ?)");
+						$ins->execute($person->{'content'}, $person->{id}) or die;
+					}
+				} while($dbpers->rows < 1);
+				my $row = $dbpers->fetchrow_arrayref;
+				my $speaktalk = $dbh->prepare("INSERT INTO speakers_talks(speaker, talk) VALUES(?, (SELECT id FROM talks WHERE upstreamid = ?))");
+				$speaktalk->execute($row->[0], $talk_upid);
+			}
+		}
+	}
+}
+
+$dbh->commit;
+print "ok\n";

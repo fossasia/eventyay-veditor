@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title><%= title %></title>
+    %= stylesheet '/style.css'
+    % if (my $scripts = stash 'scripts_raw') {
+    %   foreach my $script(@$scripts) {
+    <script><%== $script %></script>
+    %   }
+    % }
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/bootstrap4/css/bootstrap.min.css">
+    <link rel="stylesheet" href="/font-awesome/css/font-awesome.min.css">
+    <script src="/jquery/jquery.min.js"></script>
+    <script src="/popper.js/umd/popper.min.js"></script>
+    <script src="/bootstrap4/js/bootstrap.min.js"></script>
+    % if (my $sheets = stash 'stylesheets') {
+    %   foreach my $stylesheet(@$sheets) {
+    %= stylesheet $stylesheet
+    %   }
+    % }
+    % if (my $extra = stash 'scripts_extra') {
+    %    foreach my $script(@$extra) {
+    <script src='<%== $script %>'></script>
+    %    }
+    % }
+  </head>
+  <body>
+    <div class="<%= defined(stash 'fluid') ? 'container-fluid' : 'container' %>"><%= content %>
+  <p id="version">SReview <%= $c->version %>. Code is <a href='https://salsa.debian.org/debconf-video-team/sreview'>available</a> under the <a href='http://www.gnu.org/licenses/agpl-3.0.html'>GNU AGPLv3</a>. Patches welcome :-)</p>
+  </div>
+  </body>
+</html>

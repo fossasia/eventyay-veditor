@@ -1,0 +1,16 @@
+    <h1>
+      <small><%= $talk->eventname . " videos " =%></small>
+      <%= $talk->title =%>
+    </h1>
+    <div class="row" id="submission_notification">
+      <div class="col-sm-12">
+        <div class="jumbotron">
+          <h2 class="text-success">
+            <i class="fa fa-thumbs-up"></i>
+            Thank you for sending your review
+          </h2>
+          <p>You have told us the video looks good, so we'll mark it as complete.</p>
+          <p>Thanks for your contribution!</p>
+        </div>
+      </div>
+    </div> 

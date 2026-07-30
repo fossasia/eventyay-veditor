@@ -1,0 +1,30 @@
+%layout "default", scripts_extra => [ "/vue/vue.min.js" ];
+<div id="preview">
+  <h1>Video credit previews</h1>
+  <p v-if="events.length > 0">Event:
+    <select v-model="event">
+      <option v-for="e in events" v-bind:value="e.id">{{e.name}}</option>
+    </select>
+    <button class="btn btn-light" v-on:click="reloadEvent"><i class="fa fa-regular fa-rotate-right"></i></button>
+  </p>
+  <span v-if="rows.length > 0">
+    <span v-if="rows[0].nonce">
+      <div class="row" v-for="row in rows">
+        <div class="col-12">
+	  "{{row.name}}", by {{row.speakers}}
+	</div>
+        <talk-preview v-bind:talk="row" which="preroll"></talk-preview>
+        <talk-preview v-bind:talk="row" which="sorry"></talk-preview>
+        <talk-preview v-bind:talk="row" which="postroll"></talk-preview>
+      </div>
+    </span>
+    <div v-if="!rows[0].nonce">
+      <div class="row">
+        <div class="col-12">
+          <p>Anonymous reviews are not enabled, therefore we can't see previews here. Sorry!</p>
+        </div>
+      </div>
+    </div>
+  </span>
+</div>
+<script src="/credits.js"></script>

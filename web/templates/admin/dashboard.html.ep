@@ -1,0 +1,45 @@
+<h1> Hi <%= $email%>!</h1>
+<% if (my $message = flash 'msg') { %>
+<p><b><%= $message %></b></p>
+<% } %>
+<p>The following actions are possible:</p>
+<dl><dt>Create a new user</dt>
+<dd>
+  %= form_for adduser => begin
+    %= label_for email => 'Username (email address):'
+    %= email_field 'email'
+    <br>
+    %= label_for name => 'Name:'
+    %= text_field 'name'
+    <br>
+    %= label_for isadmin => 'Is administrator?'
+    %= check_box isadmin => 'true'
+    <br>
+    %= label_for isvolunteer => 'Is volunteer?'
+    %= check_box isvolunteer => 'true'
+    <br>
+    %= label_for rooms => 'Limited to room:'
+    %= select_field rooms => $rooms
+    <br>
+    %= submit_button
+  %end
+</dd>
+<dt>Reset a password</dt>
+<dd>
+  %= form_for chpw => begin
+    %= label_for email => 'User email:'
+    %= email_field 'email'
+    %= submit_button
+  %end
+</dd>
+<dt>Change my password</dt>
+<dd>
+  %= form_for setpw => begin
+    %= label_for password1 => 'New password:'
+    %= password_field 'password1'
+    %= label_for password2 => 'Again:'
+    %= password_field 'password2'
+    %= submit_button
+  %end
+</dd>
+</dl>

@@ -1,0 +1,7 @@
+pullPolicy: Always
+containerLabel: main
+webHostname: sreviewk.example.com
+config:
+  schedule_format: '"penta"'
+  schedule_options: '{"url":"https://fosdem.org/2021/schedule/xml"}'
+  event: '"FOSDEM 2021"'

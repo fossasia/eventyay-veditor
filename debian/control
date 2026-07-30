@@ -1,0 +1,130 @@
+Source: sreview
+Section: video
+Priority: optional
+Rules-Requires-Root: no
+Standards-Version: 4.1.1
+Maintainer: Wouter Verhelst <wouter@debian.org>
+Vcs-Browser: https://salsa.debian.org/wouter/sreview
+Vcs-Git: https://salsa.debian.org/wouter/sreview
+Build-Depends: debhelper-compat (= 13),
+               dh-apache2,
+               dh-exec,
+               nodejs (>= 18),
+               node-jsdom,
+               node-jquery,
+               ffmpeg,
+               libclass-type-enum-perl,
+               libcryptx-perl,
+               libdatetime-format-pg-perl,
+               libdatetime-perl,
+               libextutils-depends-perl,
+               libfile-which-perl,
+               libmedia-convert-perl (>= 1.5.1-0),
+               libmojolicious-plugin-openapi-perl,
+               libmojo-pg-perl,
+               libmoose-perl,
+               libtest-deep-perl,
+               libtext-format-perl,
+               libyaml-libyaml-perl,
+
+Package: sreview-master
+Architecture: all
+Depends: sreview-common,
+         ${misc:Depends},
+         ${perl:Depends},
+         adduser,
+Recommends: postgresql,
+            postgresql-contrib,
+            rsync,
+            sreview-detect,
+Description: SReview components for master host
+ SReview is a video review and transcoding system. It allows users to
+ review videos, and will then (after the review has finished) transcode
+ them into archive-quality video files.
+ .
+ This package contains the components that should run on just one
+ server. It is not useful without one or more machines also running the
+ webinterface (in the sreview-web package) or the encoder (in the
+ sreview-encoder package).
+
+Package: sreview-web
+Architecture: all
+Depends: fonts-font-awesome,
+         libcryptx-perl,
+         libjs-bootstrap4,
+         libjs-vue,
+         libmojolicious-plugin-openapi-perl,
+         pwgen,
+         sreview-common,
+         ${misc:Depends},
+Recommends: httpd,
+Description: SReview webinterface
+ SReview is a video review and transcoding system. It allows users to
+ review videos, and will then (after the review has finished) transcode
+ them into archive-quality video files.
+ .
+ This package contains the sreview webinterface, used by administrators
+ and reviewers.
+
+Package: sreview-encoder
+Architecture: all
+Depends: libemail-address-perl,
+         libemail-sender-perl,
+         libemail-stuffer-perl,
+         sreview-common,
+         ${misc:Depends},
+         ${perl:Depends},
+Recommends: gridengine-exec,
+Description: SReview encoder code
+ SReview is a video review and transcoding system. It allows users to
+ review videos, and will then (after the review has finished) transcode
+ them into archive-quality video files.
+ .
+ This package contains the encoder scripts that do all the hard work.
+ It should be installed on the machines which will do the actual
+ transcoding.
+
+Package: sreview-common
+Architecture: all
+Depends: ffmpeg,
+         inkscape,
+         libclass-type-enum-perl,
+         libdatetime-format-iso8601-perl,
+         libdatetime-format-pg-perl,
+         libdatetime-perl,
+         libmedia-convert-perl (>= 1.1.0-2~),
+         libmojo-pg-perl,
+         libmojolicious-perl,
+         libmoose-perl,
+         libnet-amazon-s3-perl,
+         libtext-format-perl,
+         pwgen,
+         ${misc:Depends},
+Suggests: libwww-curl-perl,
+Description: SReview -- common code
+ SReview is a video review and transcoding system. It allows users to
+ review videos, and will then (after the review has finished) transcode
+ them into archive-quality video files.
+ .
+ This package contains the common code used by all the other SReview
+ packages.
+
+Package: sreview-detect
+Architecture: all
+Depends: libdatetime-format-pg-perl,
+         libical-parser-perl,
+         libjson-perl,
+         libxml-simpleobject-perl,
+         sreview-common,
+         ${misc:Depends},
+Description: SReview input detection script
+ SReview is a video review and transcoding system. It allows users to
+ review videos, and will then (after the review has finished) transcode
+ them into archive-quality video files.
+ .
+ This package contains the sreview-detect script, which probes files in
+ the input directory and either adds them to the database if they're
+ new, or just updates their length if they're already known.
+ .
+ It also contains the sreview-import script, which is used to import
+ schedules from conference management systems.

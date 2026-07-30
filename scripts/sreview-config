@@ -1,0 +1,137 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+
+use SReview::Config;
+use SReview::Config::Common;
+use SReview::Db;
+use Getopt::Long;
+use Pod::Usage;
+
+my $cfile;
+my $action = undef;
+my $help = 0;
+my @extrasettings;
+my @dumpkeys;
+
+GetOptions(
+	"config-file=s" => \$cfile,
+	"action=s" => \$action,
+	"help" => \$help,
+	"set=s" => \@extrasettings,
+	"get=s" => \@dumpkeys,
+) or pod2usage("command line invalid");
+
+=head1 NAME
+
+sreview-config - manage the SReview configuration
+
+=head1 SYNOPSIS
+
+sreview-config --help|--config-file=FILE|--action=ACTION|--set=KEY|VALUE
+
+=head1 DESCRIPTION
+
+sreview-config is used to manage the SReview configuration from the
+command line. It takes up to two options: the current configuration file
+to read defaults from, and the action to perform on that configuration
+file.
+
+It can be used on upgrade of SReview to a newer version, to initialize the
+configuration with working settings, or to initialize the database.
+
+=head1 OPTIONS
+
+=head2 B<--help>
+
+Produce help output.
+
+=head2 B<--config-file>=FILE
+
+Use C<FILE> as the configuration file to read defaults from. If this
+parameter is not specified, then sreview-config will try the file
+C<config.pm> in the directory pointed to by the C<SREVIEW_WDIR>
+environment variable, followed by C</etc/sreview/config.pm>, and then
+fall back on the builtin defaults.
+
+=head2 B<--set>=KEY=VALUE
+
+After reading the selected config file (see C<--config-file>) and before
+performing the requested action, set the value of configuration setting
+C<KEY> to C<VALUE>.
+
+This option can be repeated multiple times as needed.
+
+=head2 B<--action>=ACTION
+
+Perform ACTION, which can be one of:
+
+=head3 dump
+
+Write the current configuration to standard output. B<Note>: Do I<not>
+redirect the output of this command to the active configuration file,
+since that will overwrite the active configuration file with empty data
+before it is read by C<sreview-config>, which will not work. See
+C<update> for that.
+
+=head3 initdb
+
+Read the configuration file, then initialize the database that is
+configured.
+
+Note that this action is not strictly necessary; sreview-web will
+implicitly initialize and upgrade the database to the latest version at
+startup.
+
+=head3 update
+
+Read the configuration file, then rewrite it with new settings that are
+not found in the current configuration file, as well as incorporating
+configuration settings that were set with C<--set>.
+
+This is useful on upgrade of SReview, so that new configuration
+options can be added to the configuration file without loss of old
+options. It can also be used as a way to configure C<sreview>.
+
+=head2 B<--get>=KEY
+
+Get the value of KEY, in JSON format
+
+=cut
+
+if($help) {
+	pod2usage(0);
+}
+
+my $config = SReview::Config::Common::setup($cfile);
+
+foreach my $setting(@extrasettings) {
+	die "Missing = in setting $setting" unless $setting =~ /.*=.*/;
+
+	my ($key, $value) = split(/=/, $setting, 2);
+	$config->set($key => $value);
+}
+
+foreach my $key(@dumpkeys) {
+	$config->dump_item($key);
+	print "\n";
+}
+
+exit 0 if scalar(@dumpkeys) > 0;
+
+if(!defined($action)) {
+	pod2usage("Need an action");
+}
+if($action eq "dump") {
+	print $config->dump();
+} elsif($action eq "initdb") {
+	SReview::Db::init($config);
+} elsif($action eq "update") {
+	$cfile = SReview::Config::Common::get_default_cfile() unless defined($cfile);
+	open CFILE, ">$cfile";
+	print CFILE $config->dump();
+	close CFILE;
+} else {
+	pod2usage("invalid action");
+}

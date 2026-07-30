@@ -1,0 +1,450 @@
+#!/usr/bin/perl -w
+
+use v5.28;
+
+use strict;
+use warnings;
+
+use DBI;
+use File::Basename;
+use File::Copy;
+use File::Temp qw/tempdir/;
+use Media::Convert::AccurateCut;
+use Media::Convert::Asset;
+use Media::Convert::Asset::Concat;
+use Media::Convert::AvSync;
+use Media::Convert::Map;
+use Media::Convert::Normalizer;;
+use Media::Convert::Pipe;;
+use SReview::Config::Common;
+use SReview::Files::Factory;
+use SReview::Talk;
+use SReview::Credits qw/ensure_credit_preview/;
+use JSON::MaybeXS;
+
+=head1 NAME
+
+sreview-cut - cut a talk out of the raw recording data
+
+=head1 SYNOPSIS
+
+sreview-cut TALKID
+
+=head1 DESCRIPTION
+
+C<sreview-cut> performs the following actions:
+
+=over
+
+=item *
+
+Look up the talk with id TALKID in the database
+
+=item *
+
+From the raw files, extract the amount of video that, according to the
+schedule, is part of the talk of which the event was given as the main
+video (with adjustments as specified by the reviewer, if any, applied).
+
+=item *
+
+Extract the 20 minutes just before and the 20 minutes just after the main
+video into the pre and post videos.
+
+=item *
+
+Apply A/V sync correction values if any exist.
+
+=item *
+
+Perform audio normalization, if enabled in the configuration
+
+=item *
+
+Extract sample videos from all three channels into preview audio
+streams, if enabled in the configuration
+
+=item *
+
+Move the talk to the next state.
+
+=back
+
+sreview-cut will only re-encode those parts of the original video that
+B<have> to be re-encoded in order to make sure that the video that is
+finally produced starts with a key frame, and will re-encode the
+original audio of the main video at most once, after audio normalization
+if that was enabled in the configuration.
+
+Any re-transcodes should be performed by C<sreview-transcode> (for
+production) and/or C<sreview-previews> (for review previews)
+
+=head1 CONFIGURATION
+
+C<sreview-cut> considers the following configuration values:
+
+=over
+
+=cut
+
+my $config = SReview::Config::Common::setup;
+
+my %duration_args;
+
+if(defined($config->get('canonical_duration'))) {
+        $duration_args{canonical_duration} = $config->get('canonical_duration');
+}
+
+$ENV{TMPDIR} = $config->get("workdir");
+
+=item workdir
+
+The location where any temporary files are stored. Defaults to C</tmp>,
+but can be overridden if necessary. These temporary files are removed
+when C<sreview-cut> finishes.
+
+=cut
+
+my $tempdir = tempdir("cutXXXXXX", DIR => $config->get("workdir"), CLEANUP => 1);
+
+=item dbistring
+
+The DBI string used to connect to the database.
+
+=cut
+
+my $talkid = $ARGV[0];
+
+=item audio_multiplex_mode
+
+The way in which the primary and backup audio channels are encoded in
+the video. Can be one of:
+
+=over
+
+=item stereo
+
+The primary audio is in the left channel, and the backup audio is in the
+right channel.
+
+=item stream
+
+The primary audio is in the first audio stream (a mono stream), and the
+backup audio is in the second audio stream (also a mono stream).
+
+=item none
+
+There is only one audio stream, and if it is a stereo channel then the
+right channel is not the backup audio.
+
+=back
+
+=cut
+
+my $multiplex_mode = $config->get("audio_multiplex_mode");
+my $maptype;
+my $primary_audio;
+my $backup_audio;
+my $both_audio;
+
+if($multiplex_mode eq "stereo") {
+	$maptype = "channel";
+	$primary_audio = "left";
+	$backup_audio = "right";
+	$both_audio = "both";
+} elsif($multiplex_mode eq "stream") {
+	$maptype = "astream";
+	$primary_audio = "0";
+	$backup_audio = "1";
+	$both_audio = "-1";
+} else {
+	$maptype = "none";
+	$primary_audio = "both";
+	$backup_audio = "both";
+	$both_audio = "both";
+}
+
+my $dbh = DBI->connect($config->get("dbistring"));
+
+$dbh->begin_work;
+
+my $started = $dbh->prepare("UPDATE talks SET progress='running' WHERE id = ? AND state = 'cutting'");
+$started->execute($talkid);
+
+$dbh->commit;
+
+my $talk = SReview::Talk->new(talkid => $talkid);
+
+if($talk->get_flag("is_injected")) {
+	$dbh->prepare("UPDATE talks SET progress='failed', comments='tried to re-cut an injected talk' WHERE id = ?")->execute($talkid);
+	exit;
+}
+
+my $corrections = $talk->corrections;
+
+my @segments_pre;
+my @segments_main;
+my @segments_post;
+
+my $prelen = 0;
+my $mainlen = 0;
+my $postlen = 0;
+
+=item inputglob
+
+The location of the (raw) input files. These files should have been put
+into the database by way of C<sreview-detect>
+
+=item pubdir
+
+The location of the intermediate files that are published to reviewers.
+
+=item accessmethods
+
+The L<SReview::Files> implementation used to access the input files
+and/or the intermediate files.
+
+=cut
+
+my $input_coll = SReview::Files::Factory->create("input", $config->get("inputglob"));
+my $output_coll = SReview::Files::Factory->create("intermediate", $config->get("pubdir"));
+
+$output_coll->delete_files(relnames => [dirname($talk->relative_name)]);
+
+my $fragments_title = encode_json($talk->avs_video_fragments);
+
+say "Video fragments:";
+say "================";
+
+say $fragments_title;
+say "-" x length($fragments_title);
+
+FRAGMENT:
+foreach my $row(@{$talk->avs_video_fragments}) {
+        say "Considering work on " . $row->{raw_filename} . "(" . $row->{rawid} . ")";
+	my $start;
+	my $stop;
+	my $target;
+	my $segments;
+
+	if($row->{talkid} == -1) {
+		$target = "pre";
+		$segments = \@segments_pre;
+		$prelen += $row->{raw_length_corrected};
+	} elsif($row->{talkid} == -2) {
+		$target = "post";
+		$segments = \@segments_post;
+		$postlen += $row->{raw_length_corrected};
+	} else {
+		$target = "main";
+		$segments = \@segments_main;
+		$mainlen += $row->{raw_length_corrected};
+	}
+        say "Targeting $target video";
+	my $input_file = $input_coll->get_file(relname => $row->{raw_filename});
+	my $input = Media::Convert::Asset->new(url => $input_file->filename, %duration_args);
+	my $output = Media::Convert::Asset->new(url => "$tempdir/$target" . $row->{rawid} . ".mkv", %duration_args);
+        my $target_length = $row->{raw_length_corrected};
+	my $frame_length = $input->video_frame_length;
+	if($target_length < $frame_length) {
+		say "Skipping fragment, desired length is less than a single frame";
+		next FRAGMENT;
+	}
+	if($row->{fragment_start} != 0) {
+                say "The wanted fragment does not start at the beginning, cutting out the desird part";
+		my $profile;
+		if(defined($config->get("input_profile"))) {
+                        $profile = Media::Convert::Asset::ProfileFactory->create($config->get("input_profile"), $input, $config->get("extra_profiles"));
+		} else {
+		        $profile = $input;
+		}
+		my $wd = "$tempdir/cut_" . $row->{rawid};
+		mkdir $wd;
+		my $cut = Media::Convert::AccurateCut->new(
+			input => $input,
+			output => $output,
+			profile => $profile,
+			start => $row->{fragment_start},
+			duration => $row->{raw_length_corrected},
+			workdir => $wd,
+		);
+		$cut->run;
+	} else {
+                say "The wanted fragment starts at the beginning of the file. Doing a dumb copy.";
+		if($row->{raw_length} ne $target_length) {
+			say "The desired duration is $target_length";
+			$output->duration($target_length);
+		}
+		my $pipe = Media::Convert::Pipe->new(
+			inputs => [$input],
+			"map" => [Media::Convert::Map->new(input => $input, type => "allcopy")],
+			output => $output,
+			vcopy => 1,
+			acopy => 1
+		);
+		$pipe->run();
+        }
+	push @$segments, Media::Convert::Asset->new(url => $output->url, %duration_args);
+}
+
+my $pre = undef;
+my $main = undef;
+my $post = undef;
+
+say "Concatenating fragments...";
+if(scalar(@segments_pre)>0) {
+	$pre = Media::Convert::Asset::Concat->new(url => "$tempdir/pre.txt", components => \@segments_pre, input_params => {fflags => "+nofillin"});
+}
+$main = Media::Convert::Asset::Concat->new(url => "$tempdir/main.txt", components => \@segments_main, input_params => {fflags => "+nofillin"});
+if(scalar(@segments_post)>0) {
+	$post = Media::Convert::Asset::Concat->new(url => "$tempdir/post.txt", components => \@segments_post, input_params => {fflags => "+nofillin"});
+}
+
+my $pre_new = undef;
+my $main_new = Media::Convert::Asset->new(url => "$tempdir/main.mkv", %duration_args);
+my $post_new = undef;
+my @videos;
+
+if(defined($pre)) {
+        say "Pre fragments";
+	$pre_new = Media::Convert::Asset->new(url => "$tempdir/pre.mkv", %duration_args);
+	Media::Convert::Pipe->new(inputs => [$pre], output => $pre_new, map => [Media::Convert::Map->new(input => $pre, type => "allcopy")], vcopy => 1, acopy => 1)->run();
+	push @videos, $pre_new;
+}
+say "Main fragments";
+Media::Convert::Pipe->new(inputs => [$main], output => $main_new, map => [Media::Convert::Map->new(input => $main, type => "allcopy")], vcopy => 1, acopy => 1)->run();
+push @videos, $main_new;
+if(defined($post)) {
+        say "Post fragments";
+	$post_new = Media::Convert::Asset->new(url => "$tempdir/post.mkv", %duration_args);
+	Media::Convert::Pipe->new(inputs => [$post], output => $post_new, map => [Media::Convert::Map->new(input => $post, type => "allcopy")], vcopy => 1, acopy => 1)->run();
+	push @videos, $post_new;
+}
+
+$pre = $pre_new;
+$post = $post_new;
+$main = $main_new;
+
+sub reload {
+	@videos = ();
+	if(defined($pre)) {
+		$pre = Media::Convert::Asset->new(url => $pre->url, %duration_args);
+		push @videos, $pre;
+	}
+	$main = Media::Convert::Asset->new(url => $main->url, %duration_args);
+	push @videos, $main;
+	if(defined($post)) {
+		$post = Media::Convert::Asset->new(url => $post->url, %duration_args);
+		push @videos, $post;
+	}
+}
+
+reload();
+
+say "Extracting audio samples";
+my $samplestart = ($main->duration / 2) - 30;
+my $samplelen = 60;
+$samplestart = ($samplestart > 0) ? $samplestart : 0;
+$samplelen = ($samplelen > $mainlen) ? $mainlen : $samplelen;
+my @choices = ($primary_audio, $backup_audio, $both_audio);
+foreach my $stream(0, 1, 2) {
+        say "stream $stream wav";
+	my $sample_wav_file = $output_coll->add_file(relname => $talk->relative_name . "/audio$stream.wav");
+	my $sample_wav = Media::Convert::Asset->new(url => $sample_wav_file->filename, fragment_start => $samplestart, duration => $samplelen, %duration_args);
+	Media::Convert::Pipe->new(inputs => [$main], output => $sample_wav, map => [Media::Convert::Map->new(input => $main, type => $maptype, choice => $choices[$stream])], acopy => 0, vskip => 1)->run();
+	$sample_wav_file->store_file;
+	foreach my $codec(qw/mp3 ogg/) {
+                say "stream $stream $codec";
+		my $tmp = $output_coll->add_file(relname => $talk->relative_name . "/audio$stream.$codec");
+		Media::Convert::Pipe->new(inputs => [$sample_wav], output => Media::Convert::Asset->new(url => $tmp->filename, %duration_args), acopy => 0, vskip => 1)->run();
+		$tmp->store_file;
+	}
+}
+
+if(!$talk->get_flag("keep_audio")) {
+        say "Extracting chosen audio channel...";
+	my $tmp = Media::Convert::Asset->new(url => "$tempdir/channel.mkv", audio_codec => $main->audio_codec, %duration_args);
+	Media::Convert::Pipe->new(inputs => [$main], output => $tmp, map => [Media::Convert::Map->new(input => $main, type => $maptype, choice => $choices[$corrections->{audio_channel}])], acopy => 0, vskip => 1)->run();
+	my $tmp2 = Media::Convert::Asset->new(url => "$tempdir/merged.mkv", %duration_args);
+	Media::Convert::Pipe->new(inputs => [$tmp, $main], output => $tmp2, map => [Media::Convert::Map->new(input => $main, type => "stream", choice => "video"), Media::Convert::Map->new(input => $tmp, type => "stream", choice => "audio")])->run();
+	move($tmp2->url, $main->url);
+	reload();
+	eval {
+                say "Performing audio normalization";
+		Media::Convert::Normalizer->new(input => $main, impl => $config->get('normalizer'), output => Media::Convert::Asset->new(url => "$tempdir/temp.mkv", %duration_args))->run();
+	};
+	if($@) {
+		say "normalization failed, skipping...";
+	} else {
+		my @stat = stat("$tempdir/temp.mkv");
+		if($stat[7] != 0) {
+			move("$tempdir/temp.mkv", $main->url);
+			reload();
+		}
+	}
+}
+
+if($corrections->{offset_audio} != 0) {
+        say "Performing A/V sync correction";
+	for my $vid(@videos) {
+		my $tmp = Media::Convert::Asset->new(url => "$tempdir/temp.mkv", %duration_args);
+		Media::Convert::AvSync->new(input => $vid, output => $tmp, audio_delay => $corrections->{offset_audio})->run();
+		move($tmp->url, $vid->url);
+	}
+	reload();
+}
+
+say "Done, updating database and uploading files if necessary";
+my $postlen_db = 0;
+my $prelen_db = 0;
+if(defined($pre)) {
+	$prelen_db = $pre->duration;
+	my $pre_file = $output_coll->add_file(relname => $talk->relative_name . "/pre.mkv");
+	move($pre->url, $pre_file->filename);
+	$pre_file->store_file;
+} else {
+	$output_coll->delete_files(relnames => [$talk->relative_name . "/pre.mkv"]);
+}
+if(defined($post)) {
+	$postlen_db = $post->duration;
+	my $post_file = $output_coll->add_file(relname => $talk->relative_name . "/post.mkv");
+	move($post->url, $post_file->filename);
+	$post_file->store_file;
+} else {
+	$output_coll->delete_files(relnames => [$talk->relative_name . "/post.mkv"]);
+}
+
+my $final = $output_coll->add_file(relname => $talk->relative_name . "/main.mkv");
+
+move($main->url, $final->filename);
+
+my $fixups = $config->get('cut_fixups');
+if(defined($fixups) && ref($fixups) eq 'ARRAY') {
+	foreach my $cmd(@$fixups) {
+		next unless defined($cmd);
+		next unless ref($cmd) eq 'ARRAY';
+		system(@$cmd, $final->filename) == 0 or die "fixup command failed: $?";
+		$final->store_file;
+	}
+}
+
+$final->store_file;
+
+ensure_credit_preview('pre', $talk, $config, $output_coll, 1);
+ensure_credit_preview('post', $talk, $config, $output_coll, 1);
+ensure_credit_preview('sorry', $talk, $config, $output_coll, 1);
+
+$dbh->begin_work;
+
+my $update = $dbh->prepare("UPDATE talks SET progress='done', prelen = ?::interval, postlen = ?::interval WHERE id = ? AND state='cutting'");
+$update->execute("$prelen_db seconds", "$postlen_db seconds", $talkid);
+
+$dbh->commit;
+
+=back
+
+=head1 SEE ALSO
+
+L<sreview-transcode>, L<sreview-previews>, L<sreview-skip>, L<sreview-config>
+
+=cut

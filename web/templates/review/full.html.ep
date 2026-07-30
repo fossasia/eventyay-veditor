@@ -1,0 +1,1029 @@
+% if (my $cmessage = flash 'completion_message') {
+<div class="alert alert-success alert-dismissable fade show">
+  <a href="#" class="close" data-dismiss="alert" aria-label="close">&times;</a>
+  <%= $cmessage =%>
+</div>
+% }
+% if (my $emessage = flash 'error_message') {
+<div class="alert alert-warning alert-dismissable fade show">
+  <a href="#" class="close" data-dismiss="alert" aria-label="close">&times;</a>
+  <%= $emessage =%>
+</div>
+% }
+% if ( $adminspecial ) {
+<div class="alert alert-warning alert-dismissable fade show">
+  <a href="#" class="close" data-dismiss="alert" aria-label="close">&times;</a>
+  <p><strong>Note</strong>: this talk is currently in the state <strong><%= $talk->state %></strong>, <em>not</em> in one of the preview or broken states. You can only see this review page because you are admin!</p>
+  <p>Please <strong>use caution</strong> when making changes.</p>
+</div>
+% }
+    <h1>
+      <small><%= $talk->eventname . " videos" =%></small>
+      <%= $talk->title =%>
+    </h1>
+    <div class="row" id="talk_info">
+      <div class="col-sm-12">
+        <dl class="dl-horizontal">
+          <dt>Speakers:</dt>
+          <dd><%= $talk->speakers =%></dd>
+          <dt>Date:</dt>
+          <dd><%= $talk->readable_date =%></dd>
+          <dt>Room:</dt>
+          <dd><%= $talk->room =%></dd>
+        </dl>
+        <a href="<%= $vid_prefix =%>/<%= $talk->relative_name =%>/main.<%= $talk->preview_exten =%>">Download video</a>
+      </div>
+    </div>
+    <div class="row">
+      <div class="col-sm-8">
+        <h2>What to check when reviewing this video</h2>
+        <ol>
+          <li><strong>Check the beginning</strong> of the video to make sure it starts at the right time.</li>
+          <li><strong>Check the end</strong> of the video to make sure it finishes at the right time.</li>
+          <li><strong>Check the sound</strong> to make sure it's ok.</li>
+        </ol>
+        <p>Then answer the <a href="#big_question">How is this video</a> question at the bottom of the page.</p>
+        <p>By the way, <strong>nothing you do here will result in data loss.</strong> In fact, you can <a href="#/" id="restore_original">restore the original video</a> at any time.</p>
+      </div>
+    </div>
+    <div class="row restore_original">
+      <div class="col-sm-8">
+        <div class="alert alert-warning">
+          <h3>Restore the original video</h3>
+          <p>What you are about to do will <strong>remove all changes</strong> made to this video so far, and reset it to its initial state.</p>
+          <p>That is a pretty drastic thing to do, that's why we are asking you again.</p>
+          <div>
+            <button id="restore_original_confirmed" class="btn btn-warning btn-lg">Yes, restore the original video</button>
+            <a class="btn btn-lg btn-link">No, cancel this business</a>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="row" id="credit_slides">
+      <div class="col-sm-12">
+        <h2>Credits</h2>
+      </div>
+    </div>
+    <div class="row">
+      <div class="col-sm-4 text-center">
+        % if ($template_format eq 'synfig') {
+        <video class="img-fluid" controls="controls" playsinline="playsinline">
+          <source src="/api/v1/nonce/<%= $talk->nonce =%>/preroll" type="video/webm" />
+        </video>
+        % } else {
+        <img class="img-fluid" src="/api/v1/nonce/<%= $talk->nonce =%>/preroll" />
+        % }
+        <p>shown before the main video</p>
+      </div>
+      % if (defined($talk->apology) && length($talk->apology) > 0) {
+      <div class="col-sm-4 text-center">
+        % if ($template_format eq 'synfig') {
+        <video class="img-fluid" controls="controls" playsinline="playsinline">
+          <source src="/api/v1/nonce/<%= $talk->nonce =%>/sorry" type="video/webm" />
+        </video>
+        % } else {
+        <img class="img-fluid" src="/api/v1/nonce/<%= $talk->nonce =%>/sorry" />
+        % }
+        <p>shown between the opening slide and the main video</p>
+      </div>
+      % }
+      <div class="col-sm-4 text-center">
+        % if ($template_format eq 'synfig') {
+        <video class="img-fluid" controls="controls" playsinline="playsinline">
+          <source src="/api/v1/nonce/<%= $talk->nonce =%>/postroll" type="video/webm" />
+        </video>
+        % } else {
+        <img class="img-fluid" src="/api/v1/nonce/<%= $talk->nonce =%>/postroll" />
+        % }
+        <p>shown after the main video</p>
+      </div>
+    </div>
+    <div class="row" id="main_video">
+      <div class="col-sm-8">
+        <div class="embed-responsive embed-responsive-16by9">
+          <video id="video-main" class="embed-responsive-item" controls="controls" src="<%= $vid_prefix =%>/<%= $talk->relative_name =%>/main.<%= $talk->preview_exten =%>"></video>
+        </div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="col-sm-12">
+        <h2 id="big_question">How is this video?</h2>
+        <form id="main_form" action="/r/<%= $talk->nonce =%>/update" method="POST">
+          <fieldset>
+            <div class="radio">
+              <label>
+                <input type="radio" name="video_state" value="ok" checked>
+                Perfect! Please release it to the world.
+              </label>
+            </div>
+            <div class="radio">
+              <label>
+                <input type="radio" name="video_state" value="not_ok">
+                The video has problems.
+              </label>
+            </div>
+          </fieldset>
+          <fieldset id="problems_with_start_time" class="video_has_problems">
+            <legend>Start time</legend>
+            <div class="radio">
+              <label>
+                <input type="radio" name="start_time" value="start_time_ok" checked>
+                The start time is ok
+              </label>
+            </div>
+            <div class="radio">
+              <label>
+                <input type="radio" name="start_time" value="too_early">
+                The video starts too early
+              </label>
+            </div>
+            <div class="radio">
+              <label>
+                <input type="radio" name="start_time" value="too_late">
+                The video starts too late (the beginning of the talk is missing)
+              </label>
+            </div>
+            <div class="row" id="video_starts_too_early">
+              <div class="col-sm-6">
+                <div class="video-fs-container" data-video-id="video-start-early">
+                  <div class="embed-responsive embed-responsive-16by9">
+                    <video id="video-start-early" class="embed-responsive-item" controlsList="nofullscreen" src="<%= $vid_prefix =%>/<%= $talk->relative_name =%>/main.<%= $talk->preview_exten =%>"></video>
+                  </div>
+                  <div class="d-flex justify-content-center">
+                    <div class="video-controls-bar" data-video-id="video-start-early">
+                      <div class="video-controls-row video-controls-row-top d-flex align-items-center">
+                        <button type="button" class="btn btn-secondary video-playpause" data-action="playpause" data-video-id="video-start-early" title="Play / pause"><i class="fa fa-play"></i></button>
+                        <input type="range" class="video-seek-slider" data-video-id="video-start-early" min="0" max="1000" value="0" aria-label="Seek" />
+                        <span class="video-current-time" data-video-id="video-start-early">00:00.00</span>
+                        <button type="button" class="btn btn-secondary video-fullscreen" data-action="fullscreen" data-video-id="video-start-early" title="Full screen"><i class="fa fa-arrows-alt"></i></button>
+                      </div>
+                      <div class="video-controls-row video-controls-row-bottom d-flex justify-content-center">
+                        <div class="btn-group video-fine-controls" role="group" aria-label="Video fine controls" data-video-id="video-start-early" data-is-main="1">
+                    <button type="button" class="btn btn-secondary" data-action="reset" title="Reset to start"><i class="fa fa-fast-backward"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="rewind-10" title="Rewind 10 seconds"><i class="fa fa-backward"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="rewind-1" title="Rewind 1 second"><i class="fa fa-step-backward"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="rewind-frame" title="Rewind 1 frame"><i class="fa fa-chevron-left"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="sync-main" title="Sync to main video time"><i class="fa fa-refresh"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="ff-frame" title="Forward 1 frame"><i class="fa fa-chevron-right"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="ff-1" title="Forward 1 second"><i class="fa fa-step-forward"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="ff-10" title="Forward 10 seconds"><i class="fa fa-forward"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="last-frame" title="Go to last frame"><i class="fa fa-fast-forward"></i></button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <p class="help-text">Find the correct start time, pause the video and click the big green button.</p>
+                <div id="msg_start_early" class="changemsg alert alert-success" role="alert"></div>
+                <div id="err_start_early" class="errmsg alert alert-danger" role="alert"></div>
+                <button type="button" class="btn btn-success btn-lg btn-block" id="start_time_early">Set new start time</button>
+              </div>
+            </div>
+            <div class="row" id="video_starts_too_late">
+              <div class="col-sm-6">
+                <div class="video-fs-container" data-video-id="video-start-late">
+                  <div class="embed-responsive embed-responsive-16by9">
+                    <video id="video-start-late" class="embed-responsive-item" controlsList="nofullscreen" src="<%= $vid_prefix =%>/<%= $talk->relative_name =%>/pre.<%= $talk->preview_exten =%>"></video>
+                  </div>
+                  <div class="d-flex justify-content-center">
+                    <div class="video-controls-bar" data-video-id="video-start-late">
+                      <div class="video-controls-row video-controls-row-top d-flex align-items-center">
+                        <button type="button" class="btn btn-secondary video-playpause" data-action="playpause" data-video-id="video-start-late" title="Play / pause"><i class="fa fa-play"></i></button>
+                        <input type="range" class="video-seek-slider" data-video-id="video-start-late" min="0" max="1000" value="0" aria-label="Seek" />
+                        <span class="video-current-time" data-video-id="video-start-late">00:00.00</span>
+                        <button type="button" class="btn btn-secondary video-fullscreen" data-action="fullscreen" data-video-id="video-start-late" title="Full screen"><i class="fa fa-arrows-alt"></i></button>
+                      </div>
+                      <div class="video-controls-row video-controls-row-bottom d-flex justify-content-center">
+                        <div class="btn-group video-fine-controls" role="group" aria-label="Video fine controls" data-video-id="video-start-late" data-is-main="0">
+                    <button type="button" class="btn btn-secondary" data-action="reset" title="Reset to start"><i class="fa fa-fast-backward"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="rewind-10" title="Rewind 10 seconds"><i class="fa fa-backward"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="rewind-1" title="Rewind 1 second"><i class="fa fa-step-backward"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="rewind-frame" title="Rewind 1 frame"><i class="fa fa-chevron-left"></i></button>
+                    <button type="button" class="btn btn-secondary" disabled style="visibility:hidden" title="Sync to main video time (not available)"></button>
+                    <button type="button" class="btn btn-secondary" data-action="ff-frame" title="Forward 1 frame"><i class="fa fa-chevron-right"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="ff-1" title="Forward 1 second"><i class="fa fa-step-forward"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="ff-10" title="Forward 10 seconds"><i class="fa fa-forward"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="last-frame" title="Go to last frame"><i class="fa fa-fast-forward"></i></button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <p class="help-text">Find the correct start time, pause the video and click the big green button.</p>
+                <div id="msg_start_late" class="changemsg alert alert-success" role="alert"></div>
+                <div id="err_start_late" class="errmsg alert alert-danger" role="alert"></div>
+                <button type="button" class="btn btn-success btn-lg btn-block" id="start_time_late">Set new start time</button>
+                <div class="alert alert-warning alert_with_control">
+                  <div class="form-check">
+                    <input id="start-missing" type="checkbox" class="form-check-input">
+                    <label class="form-check-label" for="start-missing">
+                      The start of the talk is not in this video
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </fieldset>
+          <fieldset id="problems_with_end_time" class="video_has_problems">
+            <legend>End time</legend>
+            <div class="radio">
+              <label>
+                <input type="radio" name="end_time" value="end_time_ok" checked>
+                The end time is ok
+              </label>
+            </div>
+            <div class="radio">
+              <label>
+                <input type="radio" name="end_time" value="too_early">
+                The video finishes too early (the end of the talk is missing)
+              </label>
+            </div>
+            <div class="radio">
+              <label>
+                <input type="radio" name="end_time" value="too_late">
+                The video finishes too late
+              </label>
+            </div>
+            <div class="row" id="video_ends_too_early">
+              <div class="col-sm-6">
+                <div class="video-fs-container" data-video-id="video-end-early">
+                  <div class="embed-responsive embed-responsive-16by9">
+                    <video id="video-end-early" class="embed-responsive-item" controlsList="nofullscreen" src="<%= $vid_prefix =%>/<%= $talk->relative_name =%>/post.<%= $talk->preview_exten =%>"></video>
+                  </div>
+                  <div class="d-flex justify-content-center">
+                    <div class="video-controls-bar" data-video-id="video-end-early">
+                      <div class="video-controls-row video-controls-row-top d-flex align-items-center">
+                        <button type="button" class="btn btn-secondary video-playpause" data-action="playpause" data-video-id="video-end-early" title="Play / pause"><i class="fa fa-play"></i></button>
+                        <input type="range" class="video-seek-slider" data-video-id="video-end-early" min="0" max="1000" value="0" aria-label="Seek" />
+                        <span class="video-current-time" data-video-id="video-end-early">00:00.00</span>
+                        <button type="button" class="btn btn-secondary video-fullscreen" data-action="fullscreen" data-video-id="video-end-early" title="Full screen"><i class="fa fa-arrows-alt"></i></button>
+                      </div>
+                      <div class="video-controls-row video-controls-row-bottom d-flex justify-content-center">
+                        <div class="btn-group video-fine-controls" role="group" aria-label="Video fine controls" data-video-id="video-end-early" data-is-main="0">
+                    <button type="button" class="btn btn-secondary" data-action="reset" title="Reset to start"><i class="fa fa-fast-backward"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="rewind-10" title="Rewind 10 seconds"><i class="fa fa-backward"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="rewind-1" title="Rewind 1 second"><i class="fa fa-step-backward"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="rewind-frame" title="Rewind 1 frame"><i class="fa fa-chevron-left"></i></button>
+                    <button type="button" class="btn btn-secondary" disabled style="visibility:hidden" title="Sync to main video time (not available)"></button>
+                    <button type="button" class="btn btn-secondary" data-action="ff-frame" title="Forward 1 frame"><i class="fa fa-chevron-right"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="ff-1" title="Forward 1 second"><i class="fa fa-step-forward"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="ff-10" title="Forward 10 seconds"><i class="fa fa-forward"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="last-frame" title="Go to last frame"><i class="fa fa-fast-forward"></i></button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <p class="help-text">Find the correct end time, pause the video and click the big green button.</p>
+                <div id="msg_end_early" class="changemsg alert alert-success" role="alert"></div>
+                <div id="err_end_early" class="errmsg alert alert-danger" role="alert"></div>
+                <button type="button" class="btn btn-success btn-lg btn-block" id="end_time_early">Set new end time</button>
+                <div class="alert alert-warning alert_with_control">
+                  <div class="form-check">
+                    <input id="end-missing" type="checkbox" class="form-check-input">
+                    <label for="end-missing" class="form-check-label">
+                      The end of the talk is not in this video
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="row" id="video_ends_too_late">
+              <div class="col-sm-6">
+                <div class="video-fs-container" data-video-id="video-end-late">
+                  <div class="embed-responsive embed-responsive-16by9">
+                    <video id="video-end-late" class="embed-responsive-item" controlsList="nofullscreen" src="<%= $vid_prefix =%>/<%= $talk->relative_name=%>/main.<%= $talk->preview_exten =%>"></video>
+                  </div>
+                  <div class="d-flex justify-content-center">
+                    <div class="video-controls-bar" data-video-id="video-end-late">
+                      <div class="video-controls-row video-controls-row-top d-flex align-items-center">
+                        <button type="button" class="btn btn-secondary video-playpause" data-action="playpause" data-video-id="video-end-late" title="Play / pause"><i class="fa fa-play"></i></button>
+                        <input type="range" class="video-seek-slider" data-video-id="video-end-late" min="0" max="1000" value="0" aria-label="Seek" />
+                        <span class="video-current-time" data-video-id="video-end-late">00:00.00</span>
+                        <button type="button" class="btn btn-secondary video-fullscreen" data-action="fullscreen" data-video-id="video-end-late" title="Full screen"><i class="fa fa-arrows-alt"></i></button>
+                      </div>
+                      <div class="video-controls-row video-controls-row-bottom d-flex justify-content-center">
+                        <div class="btn-group video-fine-controls" role="group" aria-label="Video fine controls" data-video-id="video-end-late" data-is-main="1">
+                    <button type="button" class="btn btn-secondary" data-action="reset" title="Reset to start"><i class="fa fa-fast-backward"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="rewind-10" title="Rewind 10 seconds"><i class="fa fa-backward"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="rewind-1" title="Rewind 1 second"><i class="fa fa-step-backward"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="rewind-frame" title="Rewind 1 frame"><i class="fa fa-chevron-left"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="sync-main" title="Sync to main video time"><i class="fa fa-refresh"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="ff-frame" title="Forward 1 frame"><i class="fa fa-chevron-right"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="ff-1" title="Forward 1 second"><i class="fa fa-step-forward"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="ff-10" title="Forward 10 seconds"><i class="fa fa-forward"></i></button>
+                    <button type="button" class="btn btn-secondary" data-action="last-frame" title="Go to last frame"><i class="fa fa-fast-forward"></i></button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <p class="help-text">Find the correct end time, pause the video and click the big green button.</p>
+                <div id="msg_end_late" class="changemsg alert alert-success" role="alert"></div>
+                <div id="err_end_late" class="errmsg alert alert-danger" role="alert"></div>
+                <button type="button" class="btn btn-success btn-lg btn-block" id="end_time_late">Set new end time</button>
+              </div>
+            </div>
+          </fieldset>
+          <fieldset class="video_has_problems">
+            <legend>Sound</legend>
+            <div class="row">
+              <div class="col-sm-6">
+                <p>Listen to a preview of all available sound channels, and select the best one.</p>
+              </div>
+            </div>
+            <div class="radio">
+              <label>
+                <input type="radio" name="audio_channel" id="audio_channel" value="0" <% if($talk->corrections->{audio_channel} == 0) { %>checked<% } %>>
+                Audio channel 0
+                <a tabindex="0" data-toggle="popover" data-trigger="hover" title="Audio channel 0" data-content="This channel is what the mixer recorded.">
+                  <i class="fa fa-question-circle"></i>
+                </a>
+                <audio controls="1" class="audio_player">
+                  <source src="<%= $vid_prefix =%>/<%= $talk->relative_name =%>/audio0.ogg" type="audio/ogg">
+                  <source src="<%= $vid_prefix =%>/<%= $talk->relative_name =%>/audio0.mp3" type="audio/mpeg">
+                  <source src="<%= $vid_prefix =%>/<%= $talk->relative_name =%>/audio0.wav" type="audio/wav">
+                </audio>
+              </label>
+            </div>
+            <div class="radio">
+              <label>
+                <input type="radio" name="audio_channel" id="audio_channel" value="1" <% if($talk->corrections->{audio_channel} == 1) { %>checked<% } %>>
+                Audio channel 1
+                <a tabindex="0" data-toggle="popover" data-trigger="hover" title="Audio channel 1" data-content="This channel is what the camera recorded.">
+                  <i class="fa fa-question-circle"></i>
+                </a>
+                <audio controls="1" class="audio_player">
+                  <source src="<%= $vid_prefix =%>/<%= $talk->relative_name =%>/audio1.ogg" type="audio/ogg">
+                  <source src="<%= $vid_prefix =%>/<%= $talk->relative_name =%>/audio1.mp3" type="audio/mpeg">
+                  <source src="<%= $vid_prefix =%>/<%= $talk->relative_name =%>/audio1.wav" type="audio/wav">
+                </audio>
+              </label>
+            </div>
+            <div class="radio">
+              <label>
+                <input type="radio" name="audio_channel" id="audio_channel" value="2" <% if ($talk->corrections->{audio_channel} == 2) { %>checked<% } %>>
+                Audio channel 2
+                <a tabindex="0" data-toggle="popover" data-trigger="hover" title="Audio channel 2" data-content="This channel mixes channel 0 (from the mixer) and channel 1 (from the camera).">
+                  <i class="fa fa-question-circle"></i>
+                </a>
+                <audio controls="1" class="audio_player">
+                  <source src="<%= $vid_prefix =%>/<%= $talk->relative_name =%>/audio2.ogg" type="audio/ogg">
+                  <source src="<%= $vid_prefix =%>/<%= $talk->relative_name =%>/audio2.mp3" type="audio/mpeg">
+                  <source src="<%= $vid_prefix =%>/<%= $talk->relative_name =%>/audio2.wav" type="audio/wav">
+                </audio>
+              </label>
+            </div>
+            <div class="radio">
+              <label>
+                <input type="radio" name="audio_channel" id="audio_channel_null" value="3">
+                There is no sound in any channel
+                <div id="no_audio">
+                  <h5>What would you like to do?</h5>
+                  <div class="radio">
+                    <label>
+                      <input type="radio" name="no_audio_options" id="yes_publish" value="yes" checked>
+                      Publish the video any way (at least people can see the slides)
+                    </label>
+                  </div>
+                  <div class="radio">
+                    <label>
+                      <input type="radio" name="no_audio_options" id="no_publish" value="no">
+                      Don't publish the video
+                    </label>
+                  </div>
+                </div>
+              </label>
+            </div>
+          </fieldset>
+          <fieldset class="video_has_problems">
+            <legend>Audio/video synchronisation</legend>
+            <div class="row">
+              <div class="col-sm-6">
+                <p>Here you can report if audio and video are out of sync, as in a badly dubbed movie.</p>
+              </div>
+            </div>
+            <div class="radio">
+              <label>
+                <input type="radio" name="av_sync" value="av_ok" checked>
+                Audio and video are in sync: all is well
+              </label>
+            </div>
+            <div class="radio">
+              <label>
+                <input type="radio" name="av_sync" value="av_not_ok_audio">
+                Audio is ahead of the video
+              </label>
+            </div>
+            <div class="radio">
+              <label>
+                <input type="radio" name="av_sync" value="av_not_ok_video">
+                Video is ahead of the audio
+              </label>
+            </div>
+            <div class="row" id="av_delay">
+              <div class="col-sm-6">
+                <p>Can you tell us the time difference between the audio and the video?</p>
+                <div class="form-inline">
+                  <div class="form-group">
+                    <div class="input-group">
+                      <input type="text" name="av_seconds" class="form-control seconds" placeholder="0.00">
+                      <div class="input-group-append">
+                        <div class="input-group-text">seconds</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </fieldset>
+          <fieldset class="video_has_problems">
+            <legend>Other brokenness</legend>
+            <div class="row">
+              <div class="col-sm-6">
+                <p>Please explain the issue in the comments element, below.</p>
+                  <div class="form-check">
+                    <input type="checkbox" id="broken" name="broken" value="yes" <%= $talk->state eq "broken" ?  "checked" : "" %> class="form-check-input"></input>
+                    <label class="form-check-label" for="broken">
+                      An administrator should look at this talk.
+                    </label>
+                  </div>
+		<p><strong>Note:</strong> if you select the 
+		  option above, the video will be <strong>marked as
+		  broken</strong>, and will <em>not</em> be released
+		  <strong>until an administrator has looked at
+		  it</strong> (or you clear the option again). If that's not
+		  what you want, please don't select the option.</p>
+		<p>For feedback that is not critical for the release of
+		  your talk, please contact the administrators directly.</p>
+              </div>
+            </div>
+          </fieldset>
+	  <fieldset class="comments">
+	    <legend>Comments</legend>
+	    <div class="row">
+	      <div class="col-sm-6">
+	        <p>Please enter your comments about this talk below.</p>
+                <textarea class="form-control" id="comment_text" name="comment_text" rows="5"></textarea>
+	        <p>Previous comments:</p>
+	        <pre class="border border-secondary rounded bg-light p-2 mb-2">
+<%= $talk->comment %>
+	        </pre>
+	      </div>
+	    </div>
+	  </fieldset>
+          <input type="hidden" name="start_time_corrval" id="start_time_corrval"></input>
+          <input type="hidden" name="end_time_corrval" id="end_time_corrval"></input>
+          <input type="hidden" name="serial" id="serial" value="<%= $talk->corrections->{serial} // 0 =%>"></input>
+          <input type="hidden" name="complete_reset" id="complete_reset"></input>
+          <div id="err_submit" class="errmsg alert alert-danger" role="alert"></div>
+          <input type="submit" id="main_action" class="btn btn-primary btn-lg" value="Send your video review to <%= $talk->eventname %>"></input>
+        </form>
+      </div>
+    </div>
+<script>
+  $(document).ready(function() {
+    var nonce = "<%= $talk->nonce =%>";
+
+    var data;
+
+    $.getJSON("/r/" + nonce + "/data",function(d) {
+      data = d;
+      data.video_end = new Date(data.end_iso);
+      data.video_start = new Date(data.start_iso);
+      data.new_end = data.video_end;
+      data.new_start = data.video_start;
+    });
+
+    $("#msg_start_early").fadeOut();
+    $("#msg_start_late").fadeOut();
+    $("#msg_end_early").fadeOut();
+    $("#msg_end_late").fadeOut();
+    $(".errmsg").hide();
+
+    (function() {
+      var serialVal = parseInt($("#serial").val() || "0", 10);
+      var okRadio = $("input[name=video_state][value=ok]");
+      var notOkRadio = $("input[name=video_state][value=not_ok]");
+      var okLabel = okRadio.closest("label");
+
+      if (!isFinite(serialVal) || serialVal <= 0) {
+        okRadio.prop("disabled", true);
+        okLabel.addClass("sreview-disabled-option");
+
+        okLabel.append(
+          $("<a>")
+            .attr("id", "video_state_ok_help")
+            .attr("tabindex", "0")
+            .attr("data-toggle", "popover")
+            .attr("data-trigger", "hover")
+            .attr("data-html", "true")
+            .attr("title", "Release requires a review")
+            .attr(
+              "data-content",
+              "<p>No corrections have been applied to this talk yet.</p>"
+                + "<p>Before you can approve it for release, you must review it and apply at least the correct start and end times using this web interface.</p>"
+                + "<p>Once at least one correction round has been submitted, you can come back and mark the talk as perfect.</p>",
+            )
+            .append($("<i>").addClass("fa fa-question-circle")),
+        );
+
+        if (okRadio.is(":checked")) {
+          okRadio.prop("checked", false);
+          notOkRadio.prop("checked", true);
+          notOkRadio.trigger("click");
+        }
+      }
+    })();
+
+    // set the page
+    if ($("input[name=video_state]:checked").val() == "ok") {
+      $(".video_has_problems, .other_brokenness").hide();
+    }
+    if ($("input[name=video_state]:checked").val() == "not_ok") {
+      $(".video_has_problems").show();
+      $(".other_brokenness").hide();
+    }
+    if ($("input[name=video_state]:checked").val() == "other") {
+      $(".video_has_problems").hide();
+      $(".other_brokenness").show();
+    }
+    if ($("input[name=av_sync]:checked").val() == "av_ok") {
+      $("#av_delay").hide();
+    }
+    $("#video_starts_too_early, #video_starts_too_late, #video_ends_too_early, #video_ends_too_late, .restore_original, #av_delay, #no_audio").hide();
+    $(".video-fine-controls").hide();
+
+    $('[data-toggle="popover"]').popover({
+      container: 'body'
+    });
+
+    // hide and show the problem reporting forms
+    $("input[name=video_state]").click(function() {
+      if ($("input[name=video_state]:checked").val() == "ok") {
+        $(".video_has_problems, .other_brokenness").slideUp();
+      }
+      if ($("input[name=video_state]:checked").val() == "not_ok") {
+        $(".video_has_problems").slideDown();
+        $(".other_brokenness").hide();
+      }
+      if ($("input[name=video_state]:checked").val() == "other") {
+        $(".video_has_problems").hide();
+        $(".other_brokenness").slideDown();
+      }
+    });
+
+    $(document).on("click", ".video-fullscreen[data-action='fullscreen']", function() {
+      var videoId = $(this).data("video-id");
+      var videoEl = document.getElementById(videoId);
+      if (!videoEl) {
+        return;
+      }
+      var container = $(videoEl).closest(".video-fs-container").get(0);
+      if (!container) {
+        return;
+      }
+
+      if (document.fullscreenElement === container) {
+        if (document.exitFullscreen) {
+          document.exitFullscreen();
+        }
+        return;
+      }
+
+      if (container.requestFullscreen) {
+        container.requestFullscreen();
+      }
+    });
+
+    // hide and show the videos for the starting time problems
+    $("input[name=start_time]").click(function() {
+      if ($("input[name=start_time]:checked").val() == "too_early") {
+        $("#video_starts_too_early").slideDown();
+        $("#video_starts_too_late").hide();
+        $(".video-fine-controls[data-video-id='video-start-early']").show();
+        $(".video-fine-controls[data-video-id='video-start-late']").hide();
+      }
+      if ($("input[name=start_time]:checked").val() == "too_late") {
+        $("#video_starts_too_early").hide();
+        $("#video_starts_too_late").slideDown();
+        $(".video-fine-controls[data-video-id='video-start-early']").hide();
+        $(".video-fine-controls[data-video-id='video-start-late']").show();
+      }
+      if ($("input[name=start_time]:checked").val() == "start_time_ok") {
+        $("#video_starts_too_early, #video_starts_too_late").fadeOut();
+        $(".video-fine-controls[data-video-id='video-start-early']").hide();
+        $(".video-fine-controls[data-video-id='video-start-late']").hide();
+      }
+    });
+
+    // hide and show the videos for the end time problems
+    $("input[name=end_time]").click(function() {
+      if ($("input[name=end_time]:checked").val() == "too_early") {
+        $("#video_ends_too_early").slideDown();
+        $("#video_ends_too_late").hide();
+        $(".video-fine-controls[data-video-id='video-end-early']").show();
+        $(".video-fine-controls[data-video-id='video-end-late']").hide();
+      }
+      if ($("input[name=end_time]:checked").val() == "too_late") {
+        $("#video_ends_too_early").hide();
+        $("#video_ends_too_late").slideDown();
+        $(".video-fine-controls[data-video-id='video-end-early']").hide();
+        $(".video-fine-controls[data-video-id='video-end-late']").show();
+      }
+      if ($("input[name=end_time]:checked").val() == "end_time_ok") {
+        $("#video_ends_too_early, #video_ends_too_late").fadeOut();
+        $(".video-fine-controls[data-video-id='video-end-early']").hide();
+        $(".video-fine-controls[data-video-id='video-end-late']").hide();
+      }
+    });
+
+    var MIN_DURATION_MS = 60 * 1000; // 1 minute
+
+    function setText(obj, startstop, starttime, endtime) {
+      $(".changemsg").stop(true, true);
+      $(".errmsg").stop(true, true);
+      obj.stop(true, true);
+      $(".changemsg, .errmsg").fadeOut().promise().done(function() {
+        obj.html("<strong>New " + startstop + " time set</strong><p>If you are curious, the new video times are: " + starttime + " to " + endtime + "</p>");
+        obj.fadeIn();
+      });
+    };
+
+    function setError(obj, message) {
+      $(".changemsg").stop(true, true);
+      $(".errmsg").stop(true, true);
+      obj.stop(true, true);
+      $(".changemsg, .errmsg").fadeOut().promise().done(function() {
+        obj.html("<strong>Error:</strong> " + message);
+        obj.fadeIn();
+      });
+    };
+
+    function addDate(d, offset) {
+      return new Date(Date.parse(d) + offset * 1000);
+    }
+
+    // the following was taken from https://stackoverflow.com/questions/1267283/how-can-i-pad-a-value-with-leading-zeros
+    function zeroPad(numZeros, num) {
+      var n = Math.abs(num);
+      var zeros = Math.max(0, numZeros - Math.floor(n).toString().length);
+      var zeroString = Math.pow(10,zeros).toString().substr(1);
+      if(num<0) {
+        zeroString = '-' + zeroString;
+      }
+      return zeroString + n;
+    }
+
+
+    function timeFromDate(d) {
+      return new Intl.DateTimeFormat('en-GB', { timeZone: "UTC", hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit", }).format(d) + "." + zeroPad(3, d.getMilliseconds());
+    }
+
+    function setStartTime(msgdiv, errdiv, corrval) {
+      var newtime = addDate(data.video_start, corrval);
+      var duration = data.new_end - newtime;
+      if (newtime >= data.new_end) {
+        setError(errdiv, "Start time cannot be at or after the end time.");
+        return;
+      }
+      if (duration < MIN_DURATION_MS) {
+        setError(errdiv, "Video length must be at least 1 minute. Current duration would be " + Math.round(duration / 1000) + " seconds.");
+        return;
+      }
+      setText(msgdiv, "start", timeFromDate(newtime), timeFromDate(data.new_end));
+      $("#start_time_corrval").val(corrval);
+      data.new_start = newtime;
+    }
+
+    function setEndTime(msgdiv, errdiv, corrval) {
+      var newtime = addDate(data.video_end, corrval);
+      var duration = newtime - data.new_start;
+      if (newtime <= data.new_start) {
+        setError(errdiv, "End time cannot be at or before the start time.");
+        return;
+      }
+      if (duration < MIN_DURATION_MS) {
+        setError(errdiv, "Video length must be at least 1 minute. Current duration would be " + Math.round(duration / 1000) + " seconds.");
+        return;
+      }
+      setText(msgdiv, "end", timeFromDate(data.new_start), timeFromDate(newtime));
+      $("#end_time_corrval").val(corrval);
+      data.new_end = newtime;
+    }
+
+    function clamp(val, min, max) {
+      return Math.min(max, Math.max(min, val));
+    }
+
+    function getFrameStepSeconds(videoEl) {
+      var fps = parseFloat(videoEl.getAttribute("data-fps"));
+      if (!fps || !isFinite(fps) || fps <= 0) {
+        fps = 25;
+      }
+      return 1 / fps;
+    }
+
+    function seekVideo(videoEl, deltaSeconds) {
+      var duration = videoEl.duration;
+      if (!isFinite(duration) || duration <= 0) {
+        duration = Infinity;
+      }
+      var newTime = clamp(videoEl.currentTime + deltaSeconds, 0, duration);
+      videoEl.currentTime = newTime;
+    }
+
+    function seekVideoAbsolute(videoEl, timeSeconds) {
+      var duration = videoEl.duration;
+      if (!isFinite(duration) || duration <= 0) {
+        duration = Infinity;
+      }
+      videoEl.currentTime = clamp(timeSeconds, 0, duration);
+    }
+
+    function setPlayPauseIcon(videoId, isPlaying) {
+      var btn = $(".video-playpause[data-video-id='" + videoId + "']").get(0);
+      if (!btn) {
+        return;
+      }
+      var icon = btn.querySelector("i");
+      if (!icon) {
+        return;
+      }
+      icon.className = isPlaying ? "fa fa-pause" : "fa fa-play";
+    }
+
+    function updateSeekSlider(videoId) {
+      var videoEl = document.getElementById(videoId);
+      var slider = $(".video-seek-slider[data-video-id='" + videoId + "']").get(0);
+      if (!videoEl || !slider) {
+        return;
+      }
+      if (slider.getAttribute("data-dragging") === "1") {
+        return;
+      }
+      var d = videoEl.duration;
+      if (!isFinite(d) || d <= 0) {
+        return;
+      }
+      var v = Math.round((videoEl.currentTime / d) * 1000);
+      slider.value = String(clamp(v, 0, 1000));
+    }
+
+    function seekFromSlider(videoId) {
+      var videoEl = document.getElementById(videoId);
+      var slider = $(".video-seek-slider[data-video-id='" + videoId + "']").get(0);
+      if (!videoEl || !slider) {
+        return;
+      }
+      var d = videoEl.duration;
+      if (!isFinite(d) || d <= 0) {
+        return;
+      }
+      var target = (parseFloat(slider.value) / 1000) * d;
+      seekVideoAbsolute(videoEl, target);
+    }
+
+    function formatTime(seconds) {
+      if (!isFinite(seconds) || seconds < 0) {
+        seconds = 0;
+      }
+      var mins = Math.floor(seconds / 60);
+      var secs = Math.floor(seconds % 60);
+      var frac = Math.floor((seconds - Math.floor(seconds)) * 100);
+      var mm = String(mins).padStart(2, "0");
+      var ss = String(secs).padStart(2, "0");
+      var ff = String(frac).padStart(2, "0");
+      return mm + ":" + ss + "." + ff;
+    }
+
+    function setCurrentTimeText(videoId, force) {
+      var videoEl = document.getElementById(videoId);
+      var el = $(".video-current-time[data-video-id='" + videoId + "']").get(0);
+      if (!videoEl || !el) {
+        return;
+      }
+      var now = Date.now();
+      var last = parseInt(el.getAttribute("data-last-update") || "0", 10);
+      if (!force && now - last < 1000) {
+        return;
+      }
+      el.textContent = formatTime(videoEl.currentTime);
+      el.setAttribute("data-last-update", String(now));
+    }
+
+    $(document).on("click", ".video-playpause[data-action='playpause']", function() {
+      var videoId = $(this).data("video-id");
+      var videoEl = document.getElementById(videoId);
+      if (!videoEl) {
+        return;
+      }
+      if (videoEl.paused) {
+        if (videoEl.play) {
+          videoEl.play();
+        }
+      } else {
+        if (videoEl.pause) {
+          videoEl.pause();
+        }
+      }
+    });
+
+    $(document).on("mousedown touchstart", ".video-seek-slider", function() {
+      this.setAttribute("data-dragging", "1");
+    });
+    $(document).on("mouseup touchend", ".video-seek-slider", function() {
+      this.setAttribute("data-dragging", "0");
+    });
+    $(document).on("input change", ".video-seek-slider", function() {
+      var videoId = $(this).data("video-id");
+      seekFromSlider(videoId);
+      setCurrentTimeText(videoId, true);
+    });
+
+    ["video-start-early", "video-start-late", "video-end-early", "video-end-late"].forEach(function(id) {
+      var el = document.getElementById(id);
+      if (!el) {
+        return;
+      }
+      el.addEventListener("timeupdate", function() {
+        updateSeekSlider(id);
+        setCurrentTimeText(id, false);
+      });
+      el.addEventListener("loadedmetadata", function() {
+        updateSeekSlider(id);
+        setCurrentTimeText(id, true);
+      });
+      el.addEventListener("play", function() {
+        setPlayPauseIcon(id, true);
+      });
+      el.addEventListener("pause", function() {
+        setPlayPauseIcon(id, false);
+      });
+      setPlayPauseIcon(id, !el.paused);
+      setCurrentTimeText(id, true);
+    });
+
+    $(document).on("click", ".video-fine-controls button[data-action]", function() {
+      var $btn = $(this);
+      var $group = $btn.closest(".video-fine-controls");
+      var vidId = $group.data("video-id");
+      var action = $btn.data("action");
+      var videoEl = document.getElementById(vidId);
+      if (!videoEl) {
+        return;
+      }
+
+      if (action === "reset") {
+        seekVideoAbsolute(videoEl, 0);
+        return;
+      }
+      if (action === "rewind-10") {
+        seekVideo(videoEl, -10);
+        return;
+      }
+      if (action === "rewind-1") {
+        seekVideo(videoEl, -1);
+        return;
+      }
+      if (action === "rewind-frame") {
+        seekVideo(videoEl, -getFrameStepSeconds(videoEl));
+        return;
+      }
+      if (action === "sync-main") {
+        var mainEl = document.getElementById("video-main");
+        if (mainEl) {
+          seekVideoAbsolute(videoEl, mainEl.currentTime);
+        }
+        return;
+      }
+      if (action === "ff-frame") {
+        seekVideo(videoEl, getFrameStepSeconds(videoEl));
+        return;
+      }
+      if (action === "ff-1") {
+        seekVideo(videoEl, 1);
+        return;
+      }
+      if (action === "ff-10") {
+        seekVideo(videoEl, 10);
+        return;
+      }
+      if (action === "last-frame") {
+        var d = videoEl.duration;
+        if (isFinite(d) && d > 0) {
+          seekVideoAbsolute(videoEl, Math.max(0, d - getFrameStepSeconds(videoEl)));
+        }
+        return;
+      }
+      if (action === "fullscreen") {
+        var container = $(videoEl).closest(".video-fs-container").get(0);
+        if (!container) {
+          return;
+        }
+
+        if (document.fullscreenElement === container) {
+          if (document.exitFullscreen) {
+            document.exitFullscreen();
+          }
+          return;
+        }
+
+        if (container.requestFullscreen) {
+          container.requestFullscreen();
+        }
+        return;
+      }
+    });
+
+    // handle time set button clicks. TODO: generalize this.
+    $("#start_time_early").click(function() {
+      setStartTime($("#msg_start_early"), $("#err_start_early"), $("#video-start-early").get(0).currentTime);
+    });
+
+    $("#start-missing, #end-missing").click(function() {
+      $(".changemsg").fadeOut();
+    });
+
+    $("#start_time_late").click(function() {
+      var elem = $("#video-start-late").get(0);
+      if($("#start-missing").is(":checked")) {
+        setStartTime($("#msg_start_late"), $("#err_start_late"), 0 - elem.duration);
+      } else {
+        setStartTime($("#msg_start_late"), $("#err_start_late"), 0 - (elem.duration - elem.currentTime));
+      }
+    });
+
+    $("#end_time_early").click(function() {
+      if($("#end-missing").is(":checked")) {
+        setEndTime($("#msg_end_early"), $("#err_end_early"), $("#video-end-early").get(0).duration);
+      } else {
+        setEndTime($("#msg_end_early"), $("#err_end_early"), $("#video-end-early").get(0).currentTime);
+      }
+    });
+
+    $("#end_time_late").click(function() {
+      var elem = $("#video-end-late").get(0);
+      vidend = Date.parse(data.video_start) + elem.duration * 1000;
+      setEndTime($("#msg_end_late"), $("#err_end_late"), 0 - (elem.duration - elem.currentTime) - (Date.parse(data.video_end) - vidend) / 1000);
+    });
+
+    // show / hide the no audio options
+    $("input[name=audio_channel]").click(function() {
+      if ($("input[name=audio_channel]:checked").val() == "3") {
+        $("#no_audio").slideDown();
+      }
+      else {
+        $("#no_audio").slideUp();
+      }
+    });
+
+    // restore video option
+    $("#restore_original").click(function(){
+      $(".restore_original").slideDown();
+    });
+    $(".restore_original .btn-link").click(function(){
+      $(".restore_original").fadeOut();
+    });
+
+    $("#restore_original_confirmed").click(function(){
+      $("#complete_reset").val("1");
+      $("#main_form").submit();
+    });
+
+    // hide and show the a/v sync delay form
+    $("input[name=av_sync]").click(function() {
+      if ($("input[name=av_sync]:checked").val() == "av_ok") {
+        $("#av_delay").slideUp();
+      }
+      else {
+        $("#av_delay").slideDown();
+      }
+    });
+
+    // Validate start/end times on form submission
+    $("#main_form").submit(function(e) {
+      // Only validate if time corrections are being applied
+      var startTimeRadio = $("input[name=start_time]:checked").val();
+      var endTimeRadio = $("input[name=end_time]:checked").val();
+
+      if (startTimeRadio !== "start_time_ok" || endTimeRadio !== "end_time_ok") {
+        var duration = data.new_end - data.new_start;
+        if (data.new_start >= data.new_end) {
+          setError($("#err_submit"), "The start time must be before the end time. Please adjust your selections.");
+          e.preventDefault();
+          return false;
+        }
+        if (duration < MIN_DURATION_MS) {
+          setError($("#err_submit"), "Video length must be at least 1 minute. Current duration would be " + Math.round(duration / 1000) + " seconds. Please adjust your selections.");
+          e.preventDefault();
+          return false;
+        }
+      }
+      return true;
+    });
+
+    $('[data-toggle="popover"]').popover();
+
+  });
+</script>

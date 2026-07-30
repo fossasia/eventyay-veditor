@@ -1,0 +1,60 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-web
+spec:
+  replicas: {{ .Values.webReplicas | default 3 }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-web
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-web
+    spec:
+      containers:
+      - name: web
+        image: '{{ .Values.containerRoot | default "registry.salsa.debian.org/debconf-video-team/sreview" }}/web:{{ .Values.containerLabel | default "latest" }}'
+        imagePullPolicy: {{ .Values.pullPolicy | default "IfNotPresent" }}
+        {{- include "sreview.envvals" . | indent 8 }}
+        resources:
+          limits:
+            cpu: 500m
+          requests:
+            cpu: 200m
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-master
+  annotations:
+    checksum/configmaps: {{ include (print .Template.BasePath "/configmaps.yaml") . | sha256sum }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-master
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-master
+    spec:
+      serviceAccountName: {{ .Release.Name }}-master
+      containers:
+      - name: master
+        image: '{{ .Values.containerRoot | default "registry.salsa.debian.org/debconf-video-team/sreview" }}/master-kube:{{ .Values.containerLabel | default "latest" }}'
+        imagePullPolicy: {{ .Values.pullPolicy | default "IfNotPresent" }}
+        {{- include "sreview.envvals" . | indent 8 }}
+        volumeMounts:
+        - name: rkconfig
+          readOnly: true
+          mountPath: /opt/sreview
+      volumes:
+      - name: rkconfig
+        configMap:
+          name: {{ .Release.Name }}-run-kube-config

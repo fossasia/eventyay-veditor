@@ -1,0 +1,99 @@
+#!/usr/bin/perl
+
+# SReview, a web-based video review and transcoding system
+# Copyright (c) 2016-2017, Wouter Verhelst <w@uter.be>
+#
+# SReview is free software: you can redistribute it and/or modify it
+# under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public
+# License along with this program.  If not, see
+# <http://www.gnu.org/licenses/>.
+
+use strict;
+use warnings;
+
+use Email::Sender::Simple qw(sendmail);
+use Email::Simple;
+use Email::MIME::Encodings;
+
+use DBI;
+
+our $config;
+
+require './config.pl';
+
+my $dbh = DBI->connect($config->{dbistring}, '', '') or die "Cannot connect to database!";
+
+my $recps = $dbh->prepare("SELECT title,speakeremail(talks.id) as speakers,nonce,name,email FROM talks JOIN tracks ON talks.track = tracks.id WHERE state='preview' ORDER BY email");
+
+$recps->execute();
+my $trackmgr_email;
+my $trackmgr_name;
+my @talks;
+
+sub send_email {
+	my $talkdescs = join("\n",@talks);
+	my $body = <<EOF;
+Hi,
+
+Asking speakers to review videos has been a great success; right now,
+over half our videos have already been released. When compared to last
+year, when the last video was released in July (and the first wasn't
+released until about a week *after* the conference), this is a massive
+improvement.
+
+However, we seem to be losing momentum a bit; most of our encoders are
+currently idle. Please help us keeping things going, either by
+encouraging your speakers to do the review of their talks, or by doing
+those reviews yourself. With your help, we may be able to release most
+of our videos by the end of the week.
+
+For your convenience, these are the videos from your devroom which are
+still in need of review:
+
+$talkdescs
+
+Thanks for your assistance,
+
+The FOSDEM video team
+EOF
+	$body = Email::MIME::Encodings::encode(quotedprint => $body);
+	my $email = Email::Simple->create(header =>
+			[
+				From => '<noreply@fosdem.org>',
+				To => $trackmgr_email,
+				Subject => "Video review: please help keep the momentum going!",
+				"Reply-To" => '<video@fosdem.org>',
+				"Content-Transfer-Encoding" => "Quoted-Printable",
+			],
+			body => $body
+		);
+
+	sendmail($email);
+}
+
+while(my $row=$recps->fetchrow_hashref) {
+	if(defined($trackmgr_email)) {
+		if($row->{email} ne $trackmgr_email) {
+			send_email;
+			@talks = ();
+		}
+	}
+	$trackmgr_name = $row->{name};
+	$trackmgr_email = $row->{email};
+	my $speakers = defined($row->{speakers}) ? $row->{speakers} : "(not known)";
+	$speakers =~ s/[^[:ascii:]]//g;
+	my $title = $row->{title};
+	$title =~ s/[^[:ascii:]]//g;
+	push @talks, $title . ":\n\tspeakers:" .  $speakers
+			.  "\n\thttps://review.video.fosdem.org/review/" . $row->{nonce} . "\n";
+}
+

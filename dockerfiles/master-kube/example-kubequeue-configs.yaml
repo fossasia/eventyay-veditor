@@ -1,0 +1,191 @@
+---
+apiVersion: kubequeue.grep.be/v1
+kind: JobQueue
+metadata:
+  name: sreview-queue
+spec:
+  maxJobs: 10
+---
+apiVersion: kubequeue.grep.be/v1
+kind: JobDef
+metadata:
+  name: sreview-previews
+spec:
+  queueName: sreview-queue
+  jobTemplate:
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: test
+    spec:
+      template:
+        metadata:
+          name: sreview
+        spec:
+          containers:
+          - name: worker
+            image: registry.salsa.debian.org/debconf-video-team/sreview/detect:main
+          command:
+          - sreview-previews
+          restartPolicy: OnFailure
+---
+apiVersion: kubequeue.grep.be/v1
+kind: JobDef
+metadata:
+  name: sreview-cut
+spec:
+  queueName: sreview-queue
+  jobTemplate:
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: test
+    spec:
+      template:
+        metadata:
+          name: sreview
+        spec:
+          containers:
+          - name: worker
+            image: registry.salsa.debian.org/debconf-video-team/sreview/detect:main
+          command:
+          - sreview-cut
+          restartPolicy: OnFailure
+---
+apiVersion: kubequeue.grep.be/v1
+kind: JobDef
+metadata:
+  name: sreview-transcode
+spec:
+  queueName: sreview-queue
+  jobTemplate:
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: test
+    spec:
+      template:
+        metadata:
+          name: sreview
+        spec:
+          containers:
+          - name: worker
+            image: registry.salsa.debian.org/debconf-video-team/sreview/detect:main
+          command:
+          - sreview-transcode
+          restartPolicy: OnFailure
+---
+apiVersion: kubequeue.grep.be/v1
+kind: JobDef
+metadata:
+  name: sreview-notify
+spec:
+  queueName: sreview-queue
+  jobTemplate:
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: test
+    spec:
+      template:
+        metadata:
+          name: sreview
+        spec:
+          containers:
+          - name: worker
+            image: registry.salsa.debian.org/debconf-video-team/sreview/detect:main
+          command:
+          - sreview-notify
+          restartPolicy: OnFailure
+---
+apiVersion: kubequeue.grep.be/v1
+kind: JobDef
+metadata:
+  name: sreview-notify-final
+spec:
+  queueName: sreview-queue
+  jobTemplate:
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: test
+    spec:
+      template:
+        metadata:
+          name: sreview
+        spec:
+          containers:
+          - name: worker
+            image: registry.salsa.debian.org/debconf-video-team/sreview/detect:main
+          command:
+          - sreview-notify
+          restartPolicy: OnFailure
+---
+apiVersion: kubequeue.grep.be/v1
+kind: JobDef
+metadata:
+  name: sreview-announce
+spec:
+  queueName: sreview-queue
+  jobTemplate:
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: test
+    spec:
+      template:
+        metadata:
+          name: sreview
+        spec:
+          containers:
+          - name: worker
+            image: registry.salsa.debian.org/debconf-video-team/sreview/detect:main
+          command:
+          - sreview-notify
+          restartPolicy: OnFailure
+---
+apiVersion: kubequeue.grep.be/v1
+kind: JobDef
+metadata:
+  name: sreview-upload
+spec:
+  queueName: sreview-queue
+  jobTemplate:
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: test
+    spec:
+      template:
+        metadata:
+          name: sreview
+        spec:
+          containers:
+          - name: worker
+            image: registry.salsa.debian.org/debconf-video-team/sreview/detect:main
+          command:
+          - sreview-upload
+          restartPolicy: OnFailure
+---
+apiVersion: kubequeue.grep.be/v1
+kind: JobDef
+metadata:
+  name: sreview-inject-job
+spec:
+  queueName: sreview-queue
+  jobTemplate:
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: test
+    spec:
+      template:
+        metadata:
+          name: sreview
+        spec:
+          containers:
+          - name: worker
+            image: registry.salsa.debian.org/debconf-video-team/sreview/detect:main
+          command:
+          - sreview-inject-job
+          restartPolicy: OnFailure

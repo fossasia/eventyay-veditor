@@ -1,0 +1,14 @@
+MYMETA.json
+MYMETA.json.lock
+MYMETA.yml
+Makefile
+blib
+pm_to_blib
+dev-incoming/
+dev-script-output/
+dev-output/
+web/public/bootstrap4
+web/public/font-awesome
+web/public/jquery
+web/public/vue
+web/public/popper.js

@@ -1,0 +1,13 @@
+    <h1>Error</h1>
+    <div class="row error_div">
+      <div class="col-sm-6">
+        <h2 class="alert alert-danger"><%= $short_error =%></h2>
+      </div>
+    </div>
+    <div class="row error_div">
+      <div class="col-sm-6">
+        <div class="alert alert-info" role="alert">
+          <p><%= $error =%></p>
+        </div>
+      </div>
+    </div>

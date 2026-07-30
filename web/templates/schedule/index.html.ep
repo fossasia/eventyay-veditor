@@ -1,0 +1,19 @@
+%layout 'admin';
+<h1>Schedule management</h1>
+<p>Possible actions:</p>
+<dl>
+  <dt>GET /admin/schedule/talk/list</dt>
+  <dd>Creates a JSON list of all talk IDs with their titles and upstream IDs in the current event</dd>
+  <dd>GET /admin/schedule/talk/:id</dd>
+  <dd>Returns all the details on the given talk</dd>
+  <dt>DELETE /admin/schedule/talk/:id</dt>
+  <dd>Delete the talk with the given ID</dd>
+  <dt>PUT /admin/schedule/talk/</dt>
+  <dd>Create a new talk (requires JSON object)</dd>
+  <dt>PUT /admin/schedule/talk/:id</dt>
+  <dd>Update the data of the talk with the given ID</dd>
+  <dt>GET /admin/schedule/speaker/list</dt>
+  <dd>Retrieves a list of all known speakers, with their ID and name</dd>
+  <dt>PUT /admin/schedule/speaker/</dt>
+  <dd>Create a new speaker (requires JSON object)</dd>
+</dl>

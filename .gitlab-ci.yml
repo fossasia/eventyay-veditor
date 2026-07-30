@@ -1,0 +1,396 @@
+---
+variables:
+  SCAN_KUBERNETES_MANIFESTS: "true"
+include:
+  template: Security/SAST.gitlab-ci.yml
+stages:
+- test
+- build
+- autopkgtest
+- docker
+#- dockertest
+- release
+- deploy
+
+js:test:
+  stage: test
+  image: debian:unstable
+  before_script:
+  - apt-get update
+  - apt-get -y --no-install-recommends install nodejs node-nyc perl libmojolicious-perl node-jsdom node-jquery libjson-maybexs-perl
+  script:
+  - nyc --hook-run-in-context --hook-run-in-this-context --all --include='web/public/*.js' --reporter=cobertura --report-dir=js_coverage node --test --test-reporter=junit --test-reporter-destination=junit_js.xml t/js/*.test.js
+  - nyc report --reporter=text-summary
+  artifacts:
+    paths:
+    - js_coverage
+    reports:
+      junit: junit_js.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: js_coverage/cobertura-coverage.xml
+  coverage: '/^Lines\s*:\s*(\d+(?:\.\d+)?)%/'
+
+.build:
+  stage: test
+  services:
+  - postgres:11
+  - name: minio/minio:latest
+    command:
+    - server
+    - /data
+  variables:
+    POSTGRES_DB: sreview
+    POSTGRES_USER: sreview
+    POSTGRES_PASSWORD: ""
+    POSTGRES_HOST_AUTH_METHOD: trust
+    SREVIEWTEST_DB: sreview;host=postgres;user=sreview
+    SREVIEWTEST_S3_CONFIG: '{"default":{"aws_access_key_id":"minioadmin","aws_secret_access_key":"minioadmin","secure":0,"host":"minio-minio:9000"}}'
+    SREVIEWTEST_BUCKET: 'test'
+    SREVIEW_COMMAND_TUNE: '{"bs1770gain":"0.5","inkscape":"0.9"}'
+    JUNIT_OUTPUT_FILE: junit_output.xml 
+  image: $CI_JOB_NAME
+  before_script:
+  - |
+    if [ ! -z "$NEEDS_ARCHIVE" ]
+    then
+      sed -i -e 's/deb.debian.org/archive.debian.org/g;/security.debian.org/d' /etc/apt/sources.list
+      cat /etc/apt/sources.list
+    fi
+  - apt-get update; apt-get -y --no-install-recommends install inkscape ffmpeg bs1770gain libssh2-1-dev
+  - cpanm --notest ExtUtils::Depends Devel::Cover TAP::Harness::JUnit Devel::Cover::Report::Cobertura https://salsa.debian.org/wouter/media-convert.git
+  - cpanm --notest --installdeps .
+  - perl Makefile.PL
+  - perl .ci/setup-minio.pl
+  script:
+  - cover -delete
+  - HARNESS_PERL_SWITCHES='-MDevel::Cover' prove -v -l --harness TAP::Harness::JUnit
+  - cover
+  - cover -report cobertura
+  artifacts:
+    paths:
+    - cover_db
+    reports:
+      junit: junit_output.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: cover_db/cobertura.xml
+  tags:
+  - docker
+  coverage: '/^Total.* (\d+.\d+)$/'
+
+perl:latest:
+  extends: .build
+
+perl:5.32:
+  extends: .build
+
+test:committed:
+  stage: test
+  image: perl:latest
+  before_script:
+  - apt-get update; apt-get -y --no-install-recommends install git ffmpeg libssh2-1-dev
+  - cpanm ExtUtils::Depends
+  - cpanm --notest --installdeps .
+  - perl Makefile.PL
+  script:
+  - make manifest
+  - git diff --exit-code
+
+.deb: &deb
+  stage: build
+  image: $CI_JOB_NAME
+  before_script:
+  - apt-get update; apt-get -y --no-install-recommends install devscripts equivs git build-essential cpanminus
+  - if [ ! -z "$DEB_DEPENDS" ]; then apt-get -y --no-install-recommends install $DEB_DEPENDS; fi
+  - if [ ! -z "$CPAN_DEPENDS" ]; then cpanm $CPAN_DEPENDS; fi
+  - mk-build-deps -r -i -t "apt-get -y -o Debug::pkgProblemResolver=yes --no-install-recommends"
+  - DIST=${CI_JOB_NAME#*:}
+  - VERSION=$(git describe --match=v*.*.[0-9]|sed -e 's/^v//g')
+  - DEBEMAIL="gitlab-runner auto build <nowhere@nowhere>" dch --distribution $DIST -v $VERSION~$DIST-0 --no-auto-nmu "gitlab automatic snapshot build for $DIST of $VERSION-0"
+  script:
+  - dpkg-buildpackage -us -uc -i -I.git
+  after_script:
+  - mkdir products
+  - dcmd mv ../*ges products/
+  - echo "GIT_DESCRIBE=$(git describe --match=v*.*.[0-9])" > dot.env
+  artifacts:
+    paths:
+    - products
+    reports:
+      dotenv: dot.env
+  tags:
+  - docker
+
+debian:stable-backports:
+  variables:
+    DEB_DEPENDS: "-t stable-backports libmedia-convert-perl"
+  <<: *deb
+debian:testing:
+  <<: *deb
+  allow_failure: true
+debian:unstable:
+  <<: *deb
+
+.docker: &docker
+  stage: docker
+  dependencies:
+  - debian:stable-backports
+  services:
+  - docker:dind
+  image: docker:latest
+  tags:
+  - docker
+  before_script:
+  - export IMAGE_TAG=$CI_REGISTRY_IMAGE/${CI_JOB_NAME#*:}:git-$CI_COMMIT_SHORT_SHA
+  - cp products/*deb dockerfiles/${CI_JOB_NAME#*:}
+  - docker info
+  - docker pull $IMAGE_TAG || true
+  script:
+  - cd dockerfiles/${CI_JOB_NAME#*:}
+  - sed -i -e "s/@git_describe@/$GIT_DESCRIBE/g" Dockerfile
+  - docker build --build-arg=ci_registry_image=$CI_REGISTRY_IMAGE --build-arg=ci_commit_ref_slug=git-$CI_COMMIT_SHORT_SHA --cache-from $CI_REGISTRY_IMAGE/master:git-$CI_COMMIT_SHORT_SHA --cache-from $IMAGE_TAG --pull -t $IMAGE_TAG .
+  after_script:
+  - export IMAGE_TAG=$CI_REGISTRY_IMAGE/${CI_JOB_NAME#*:}:git-$CI_COMMIT_SHORT_SHA
+  - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  - docker push $IMAGE_TAG
+
+docker:common:
+  <<: *docker
+  needs:
+  - debian:stable-backports
+
+docker:encoder:
+  <<: *docker
+  needs:
+  - debian:stable-backports
+  - docker:common
+
+docker:detect:
+  <<: *docker
+  needs:
+  - debian:stable-backports
+  - docker:common
+
+docker:master-kube:
+  <<: *docker
+  needs:
+  - debian:stable-backports
+  - docker:master
+  - docker:common
+
+docker:master:
+  <<: *docker
+  needs:
+  - debian:stable-backports
+  - docker:common
+
+docker:web:
+  <<: *docker
+  needs:
+  - debian:stable-backports
+  - docker:common
+
+helm:build:
+  stage: build
+  image:
+    name: alpine/helm
+    entrypoint: [""]
+  allow_failure: true
+  before_script:
+  - cd helm
+  - helm dependency update sreview
+  - cd ..
+  script:
+  - VERSION=$(grep ^version helm/sreview/Chart.yaml|cut -d ' ' -f 2)
+  - cd helm
+  - helm package sreview
+  - cd ..
+  - mkdir -p products/helm
+  - mv helm/sreview-$VERSION.tgz products/helm
+  - echo $VERSION > products/helm/version.txt
+  artifacts:
+    paths:
+    - products/helm
+  only:
+    changes:
+    - helm/**/*
+    - .gitlab-ci.yml
+
+release:helm:
+   stage: release
+   image: debian:stable
+   allow_failure: true
+   needs:
+   - helm:build
+   dependencies:
+   - helm:build
+   before_script:
+   - apt-get update
+   - apt-get -y install curl
+   script:
+   - VERSION=$(cat products/helm/version.txt)
+   - curl --request POST --user gitlab-ci-token:$CI_JOB_TOKEN --form "chart=@products/helm/sreview-$VERSION.tgz" "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/helm/api/dev/charts"
+   only:
+     changes:
+     - helm/**/*
+     - .gitlab-ci.yml
+
+.drelease: &drelease
+  stage: release
+  when: manual
+  services:
+  - docker:dind
+  image: docker:latest
+  tags:
+  - docker
+  script:
+  - docker pull $CI_REGISTRY_IMAGE/${CI_JOB_NAME#*:}:git-$CI_COMMIT_SHORT_SHA
+  - if [ $CI_COMMIT_REF_SLUG eq "main" ]; then TARGET=latest; else TARGET=$CI_COMMIT_REF_SLUG; fi
+  - docker tag $CI_REGISTRY_IMAGE/${CI_JOB_NAME#*:}:git-$CI_COMMIT_SHORT_SHA $CI_REGISTRY_IMAGE/${CI_JOB_NAME#*:}:$TARGET
+  - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  - docker push $CI_REGISTRY_IMAGE/${CI_JOB_NAME#*:}:$TARGET
+
+release:encoder:
+  <<: *drelease
+
+release:master:
+  <<: *drelease
+
+release:master-kube:
+  <<: *drelease
+
+release:web:
+  <<: *drelease
+  
+release:detect:
+  <<: *drelease
+
+pages:
+  stage: release
+  dependencies:
+  - debian:stable-backports
+  script:
+  - mkdir public
+  - apt-get update; apt-get -y --no-install-recommends install devscripts
+  - dcmd cp products/*.changes public/
+  - for i in public/*.deb; do ln -s $(basename $i) ${i%_${i#*_}}.deb; done
+  artifacts:
+    paths:
+    - public
+  only:
+  - main
+  needs:
+  - debian:stable-backports
+
+.dput: &dput
+  stage: release
+  image: debian:stable
+  allow_failure: true
+  before_script:
+  - apt-get update
+  - apt-get -y install dput-ng
+  - echo -e "[gitlab]\nmethod=https\nfqdn=https://gitlab-runner:$CI_JOB_TOKEN@$CI_SERVER_HOST\nincoming=/api/v4/projects/$CI_PROJECT_ID/packages/debian\n" > dput.cf
+  script:
+  - dput --config=dput.cf --unchecked --no-upload-log gitlab products/*.changes
+
+dput:stable:
+  <<: *dput
+  dependencies:
+  - debian:stable-backports
+
+dput:testing:
+  <<: *dput
+  dependencies:
+  - debian:testing
+
+dput:unstable:
+  <<: *dput
+  dependencies:
+  - debian:unstable
+
+validate:unstable:
+  image: debian:unstable
+  needs:
+    - job: debian:unstable
+      artifacts: true
+  stage: autopkgtest
+  services:
+  - postgres:latest
+  - name: minio/minio:latest
+    alias: minio-minio
+    command:
+    - server
+    - /data
+  variables:
+    POSTGRES_DB: sreview
+    POSTGRES_USER: sreview
+    POSTGRES_PASSWORD: ""
+    POSTGRES_HOST_AUTH_METHOD: trust
+    SREVIEWTEST_DB: 'sreview;host=postgres;user=sreview'
+    SREVIEWTEST_INSTALLED: 1
+    SREVIEWTEST_S3_CONFIG: '{"default": {"aws_access_key_id": "minioadmin", "aws_secret_access_key":"minioadmin","secure":0,"host":"minio-minio:9000"}}'
+    SREVIEWTEST_BUCKET: 'test'
+  before_script:
+  - |
+    cat > /etc/apt/preferences.d/99backports <<'EOF'
+    Package: *
+    Pin: release a=stable-backports
+    Pin-Priority: 990
+    EOF
+  - if [ ! -z "${WITH_MC_BACKPORTS:-}" ]; then rm -f /etc/apt/preferences.d/99backports; fi
+  - apt-get update; apt-get -y --no-install-recommends install libnet-amazon-s3-perl libmojolicious-perl ffmpeg
+  - if [ ! -z "${WITH_MC_BACKPORTS:-}" ]; then apt-get -y -t stable-backports install libmedia-convert-perl; fi
+  - perl .ci/setup-minio.pl
+  - apt-get --purge -y remove libnet-amazon-s3-perl libmojolicious-perl
+  - apt-get --purge -y autoremove
+  - apt-get -y install autopkgtest
+  script:
+  - autopkgtest products/*ges -- null
+
+validate:stable-backports:
+  extends: validate:unstable
+  image: debian:stable-backports
+  needs:
+    - job: debian:stable-backports
+      artifacts: true
+  variables:
+    WITH_MC_BACKPORTS: "1"
+  allow_failure: true
+
+deploy:start:
+  rules:
+    - if: $DO_DEPLOY == "1"
+      when: on_success
+    - when: never
+  variables:
+    SECURE_FILES_DOWNLOAD_PATH: "./downloads"
+    KUBECONFIG: "./downloads/kubeconfig"
+  script:
+    - curl --silent "https://gitlab.com/gitlab-org/incubation-engineering/mobile-devops/download-secure-files/-/raw/main/installer" | bash
+    - helm upgrade --install --create-namespace -n sreview -f helm/grep.yaml --set=containerLabel=git-$CI_COMMIT_SHORT_SHA --set=containerRoot=$CI_REGISTRY_IMAGE sreview ./helm/sreview
+  environment:
+    name: dev
+    url: https://sreview.grep.be/
+    deployment_tier: development
+
+#validate:web:
+#  allow_failure: true
+#  stage: dockertest
+#  services:
+#  - name: postgres:latest
+#    alias: postgresql
+#  - name: $CI_REGISTRY_IMAGE/web:git-$CI_COMMIT_SHORT_SHA
+#    alias: web
+#  variables:
+#    POSTGRES_USER: sreview
+#    POSTGRES_DB: sreview
+#    POSTGRES_PASSWORD: ""
+#    POSTGRES_HOST_AUTH_METHOD: trust
+#    SREVIEW_DBISTRING: '"dbi:Pg:dbname=sreview;host=postgresql;user=sreview"'
+#    SREVIEW_ADMINUSER: '"test@example.com"'
+#    SREVIEW_ADMINPW: '"foo"'
+#    SREVIEW_URLBASE: '"http://web:8080/"'
+#  image: $CI_REGISTRY_IMAGE/encoder:git-$CI_COMMIT_SHORT_SHA
+#  script:
+#  - perl -I lib dockerfiles/tests/test.pl

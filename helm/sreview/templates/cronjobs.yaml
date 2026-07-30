@@ -1,0 +1,52 @@
+{{- if not .Values.no_detect_on_cluster }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-detect
+spec:
+  concurrencyPolicy: Forbid
+  schedule: 0,30 * * * *
+  jobTemplate:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-detect
+    spec:
+      template:
+        metadata:
+          labels:
+            app: {{ .Release.Name }}-detect
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: detect
+            image: '{{ .Values.containerRoot | default "registry.salsa.debian.org/debconf-video-team/sreview" }}/detect:{{ .Values.containerLabel | default "latest" }}'
+            imagePullPolicy: {{ .Values.pullPolicy | default "IfNotPresent" }}
+            command: ["/usr/bin/sreview-detect"]
+            {{- include "sreview.envvals" . | indent 12 }}
+{{- end }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-import
+spec:
+  concurrencyPolicy: Forbid
+  schedule: 0,30 * * * *
+  jobTemplate:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-import
+    spec:
+      template:
+        metadata:
+          labels:
+            app: {{ .Release.Name }}-import
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: import
+            image: '{{ .Values.containerRoot | default "registry.salsa.debian.org/debconf-video-team/sreview" }}/detect:{{ .Values.containerLabel | default "latest" }}'
+            imagePullPolicy: {{ .Values.pullPolicy | default "IfNotPresent" }}
+            command: ["/usr/bin/sreview-import"]
+            {{- include "sreview.envvals" . | indent 12 }}

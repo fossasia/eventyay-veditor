@@ -1,0 +1,8 @@
+usr/bin/sreview-web
+usr/share/perl5/SReview/API
+usr/share/perl5/SReview/API.pm
+usr/share/perl5/SReview/Access.pm
+usr/share/perl5/SReview/Web.pm
+usr/share/perl5/SReview/Web/
+web/public usr/share/sreview
+web/templates usr/share/sreview

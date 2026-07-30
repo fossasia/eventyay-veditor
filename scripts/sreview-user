@@ -1,0 +1,59 @@
+#!/usr/bin/perl -w
+
+use SReview::Config::Common;
+use DBI;
+use Getopt::Long;
+
+my $config = SReview::Config::Common::setup;
+
+my $dbh = DBI->connect($config->get('dbistring'));
+
+my $action = "";
+my $admin = 0;
+my $user = "";
+my $volunteer = 0;
+
+GetOptions(
+	"user|u=s" => \$user,
+	"admin|d" => \$admin,
+	"action|a=s" => \$action,
+);
+
+=head1 NAME
+
+sreview-user - SReview user management
+
+=head1 SYNOPSIS
+
+sreview-user [--user|-u username] [--admin|-d] [--action|-a ACTION]
+
+=head1 DESCRIPTION
+
+sreview-user is a simple script to manage SReview users. It allows you
+to create, destroy, and set passwords for users. Optionally, it also
+allows to mark newly-created users as administrators.
+
+More detailed user management should be done through the SReview
+webinterface, however.
+
+=cut
+
+if($action eq "create") {
+	open PASSWORD, "pwgen -s 10 -n 1|";
+	my $password=<PASSWORD>;
+	close(PASSWORD);
+	chomp $password;
+	$dbh->prepare("INSERT INTO users(email,password,isadmin) VALUES(?,crypt(?, gen_salt('bf', 8)),?)")->execute($user,$password,$admin ? "true" : "false") or die $!;
+	print "New password is $password\n";
+} elsif ($action eq "delete") {
+	$dbh->prepare("DELETE FROM users WHERE email = ?")->execute($user) or die $!;
+} elsif ($action eq "pwreset") {
+	open PASSWORD, "pwgen -s 10 -n 1|";
+	my $password=<PASSWORD>;
+	close(PASSWORD);
+	chomp $password;
+	$dbh->prepare("UPDATE users SET password=crypt(?,gen_salt('bf',8)) WHERE email=?")->execute($password, $user) or die $!;
+	print "New password is $password\n";
+} else {
+	die "unknown action";
+}

@@ -1,0 +1,5 @@
+#!/bin/sh
+
+sreview-config --set=secret=$(pwgen -s 40 -n 1) --action=update
+
+#DEBHELPER#

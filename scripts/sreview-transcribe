@@ -1,0 +1,115 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+use DBI;
+use File::Basename qw/dirname basename/;
+use File::Copy;
+use Mojo::Template;
+
+use SReview::Files::Factory;
+use SReview::Talk;
+
+=head1 NAME
+
+sreview-transcribe - create transcriptions from the C<sreview-transcode> output
+
+=head1 SYNOPSIS
+
+sreview-transcribe TALKID
+
+=head1 DESCRIPTION
+
+C<sreview-transcribe> performs the following actions:
+
+=over
+
+=item *
+
+Look up the talk with id TALKID in the database.
+
+=item *
+
+Run openai-whisper on the video file, outputting a .vtt (WebVTT) file.
+
+=back
+
+=over
+
+=cut
+
+my $config = SReview::Config::Common::setup;
+
+my $transcribe_cmd_tpl = $config->get("transcribe_command");
+# example: '/venv/bin/whisper --language en --output_format vtt --model tiny --output_dir <%== $output_dir %> <%== $input_filename %>';
+
+die "no transcribe_command in config" unless $transcribe_cmd_tpl;
+
+sub run_transcribe {
+        my $input_filename = shift;
+        my $output_dir = shift;
+        
+        my $mt = Mojo::Template->new;
+        
+        my $transcribe_cmd = $mt->vars(1)->render($transcribe_cmd_tpl, {input_filename => $input_filename, output_dir => $output_dir});
+
+        print "Running $transcribe_cmd\n";
+        system $transcribe_cmd;
+}
+
+=item dbistring
+
+The DBI string used to connect to the database.
+
+=cut
+
+my $dbh = DBI->connect($config->get('dbistring'), '', '') or die "Cannot connect to database!";
+my $talkid = $ARGV[0];
+
+die "no talk id" unless $talkid;
+
+$dbh->prepare("UPDATE talks SET progress='running', state='transcribing' WHERE id=?")->execute($talkid);
+
+my $talk = SReview::Talk->new(talkid => $talkid);
+
+my $data = $dbh->prepare("SELECT eventid, event, event_output, room, room_output, starttime, starttime::date AS date, to_char(starttime, 'yyyy') AS year, speakers, name AS title, subtitle, description, apologynote FROM talk_list WHERE id = ?");
+$data->execute($talkid);
+my $drow = $data->fetchrow_hashref();
+
+my $slug = $talk->slug;
+
+my $output_coll = SReview::Files::Factory->create("output", $config->get("outputdir"));
+
+my @elems = ();
+foreach my $subdir(@{$config->get('output_subdirs')}) {
+        push @elems, $drow->{$subdir};
+}
+my $relprefix = join('/', @elems);
+
+my $input_file = $output_coll->get_file(relname => join('/', $relprefix, $slug . "." . $config->get("transcribe_source_extension")));
+my $output_file = $output_coll->add_file(relname => join('/', $relprefix, $slug . '.vtt'));
+
+my $workdir = dirname($input_file->filename);
+my $expected_file = basename($input_file->filename, '.webm') . '.vtt';
+
+run_transcribe($input_file->filename, $workdir);
+
+my $vtt_file = "$workdir/$expected_file";
+if (-f $vtt_file) {
+        move($vtt_file, $output_file->filename);
+} else {
+        die "could not find $vtt_file";
+}
+
+$output_file->store_file;
+
+$dbh->prepare("UPDATE talks SET progress='done' WHERE id=? AND state='transcribing'")->execute($talkid);
+
+=back
+
+=head1 SEE ALSO
+
+C<sreview-cut>, C<sreview-transcode>, C<sreview-skip>, C<sreview-config>
+
+=cut

@@ -1,0 +1,17 @@
+%layout 'default';
+%title "SReview: $title";
+% if (my $cmsg = flash 'completion_message') {
+<div class='alert alert-success alert-dismisable fade show'>
+  <a href="#" class="close" data-dismiss="alert" aria-label="close">&times;</a>
+  <%= $cmsg =%>
+</div>
+% }
+% if (my $emsg = flash 'error_message') {
+<div class='alert alert-success alert-dismissable fade show'>
+  <a href='#' class='close' data-dismiss='alert' aria-label='close'>&times;</a>
+  <%= $emsg =%>
+</div>
+% }
+<h1><%= $title %></h1>
+<p><%== $message %></p>
+<p>Go to <%= link_to 'the SReview home page' => '/' %> or <%= link_to 'the video status overview page' => '/overview' %>.</p>

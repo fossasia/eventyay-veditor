@@ -1,0 +1,337 @@
+% if (my $cmessage = flash 'completion_message') {
+<div class="alert alert-success alert-dismissable fade show">
+  <a href="#" class="close" data-dismiss="alert" aria-label="close">&times;</a>
+  <%= $cmessage =%>
+</div>
+% }
+% if (my $emessage = flash 'error_message') {
+<div class="alert alert-warning alert-dismissable fade show">
+  <a href="#" class="close" data-dismiss="alert" aria-label="close">&times;</a>
+  <%= $emessage =%>
+</div>
+% }
+% if ( $adminspecial ) {
+<div class="alert alert-warning alert-dismissable fade show">
+  <a href="#" class="close" data-dismiss="alert" aria-label="close">&times;</a>
+  <p><strong>Note</strong>: this talk is currently in the state <strong><%= $talk->state %></strong>, <em>not</em> in one of the preview or broken states. You can only see this review page because you are admin!</p>
+  <p>Please <strong>use caution</strong> when making changes.</p>
+</div>
+% }
+    <h1>
+      <small><%= $talk->eventname . " videos" =%></small>
+      <%= $talk->title =%>
+    </h1>
+    <div class="row" id="talk_info">
+      <div class="col-sm-12">
+        <dl class="dl-horizontal">
+          <dt>Speakers:</dt>
+          <dd><%= $talk->speakers =%></dd>
+          <dt>Date:<dt>
+          <dd><%= $talk->readable_date =%></dd>
+          <dt>Room:</dt>
+          <dd><%= $talk->room =%></dd>
+        </dl>
+        <a href="<%= $vid_prefix =%>/<%= $talk->relative_name =%>/main.<%= $talk->preview_exten =%>">Download video</a>
+      </div>
+    </div>
+    <div class="row" id="credit_slides">
+      <div class="col-sm-12">
+        <h2>Credits</h2>
+      </div>
+    </div>
+    <div class="row">
+      <div class="col-sm-4 text-center">
+        % if ($template_format eq 'synfig') {
+        <video class="img-fluid" controls="controls" playsinline="playsinline">
+          <source src="/api/v1/nonce/<%= $talk->nonce =%>/preroll" type="video/webm" />
+        </video>
+        % } else {
+        <img class="img-fluid" src="/api/v1/nonce/<%= $talk->nonce =%>/preroll" />
+        % }
+        <p>shown before the main video</p>
+      </div>
+      % if (defined($talk->apology) && length($talk->apology) > 0) {
+      <div class="col-sm-4 text-center">
+        % if ($template_format eq 'synfig') {
+        <video class="img-fluid" controls="controls" playsinline="playsinline">
+          <source src="/api/v1/nonce/<%= $talk->nonce =%>/sorry" type="video/webm" />
+        </video>
+        % } else {
+        <img class="img-fluid" src="/api/v1/nonce/<%= $talk->nonce =%>/sorry" />
+        % }
+        <p>shown between the opening slide and the main video</p>
+      </div>
+      % }
+      <div class="col-sm-4 text-center">
+        % if ($template_format eq 'synfig') {
+        <video class="img-fluid" controls="controls" playsinline="playsinline">
+          <source src="/api/v1/nonce/<%= $talk->nonce =%>/postroll" type="video/webm" />
+        </video>
+        % } else {
+        <img class="img-fluid" src="/api/v1/nonce/<%= $talk->nonce =%>/postroll" />
+        % }
+        <p>shown after the main video</p>
+      </div>
+    </div>
+    <div class="row" id="main_video">
+      <div class="col-sm-8">
+        <div class="embed-responsive embed-responsive-16by9">
+          <video id="video-main" class="embed-responsive-item" controls="controls" src="<%= $vid_prefix =%>/<%= $talk->relative_name =%>/main.<%= $talk->preview_exten =%>"></video>
+        </div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="col-sm-12">
+        <h2 id="big_question">How is this video?</h2>
+        <form id="main_form" action="/r/<%= $talk->nonce =%>/update" method="POST">
+          <fieldset>
+            <div class="radio">
+              <label>
+                <input type="radio" name="video_state" value="ok" checked>
+                Perfect! Please release it to the world.
+              </label>
+            </div>
+            <div class="radio">
+              <label>
+                <input type="radio" name="video_state" value="not_ok">
+                The video has problems.
+              </label>
+            </div>
+          </fieldset>
+	  <div class="video_has_problems">
+	    <p>Please <a href="/i/<%= $talk->nonce =%>">Re-upload</a> your video.</p>
+	  </div>
+          <input type="hidden" name="serial" id="serial" value="<%= $talk->corrections->{serial} + 0 =%>"></input>
+          <input type="submit" id="main_action" class="btn btn-primary btn-lg" value="Send your video review to <%= $talk->eventname %>"></input>
+        </form>
+      </div>
+    </div>
+<script>
+  $(document).ready(function() {
+    var nonce = "<%= $talk->nonce =%>";
+
+    var data;
+
+    $.getJSON("/r/" + nonce + "/data",function(d) {
+      data = d;
+      data.video_end = new Date(data.end_iso);
+      data.video_start = new Date(data.start_iso);
+      data.new_end = data.video_end;
+      data.new_start = data.video_start;
+    });
+
+    $("#msg_start_early").fadeOut();
+    $("#msg_start_late").fadeOut();
+    $("#msg_end_early").fadeOut();
+    $("#msg_end_late").fadeOut();
+
+    (function() {
+      var serialVal = parseInt($("#serial").val() || "0", 10);
+      var okRadio = $("input[name=video_state][value=ok]");
+      var notOkRadio = $("input[name=video_state][value=not_ok]");
+      var okLabel = okRadio.closest("label");
+
+      if (!isFinite(serialVal) || serialVal <= 0) {
+        okRadio.prop("disabled", true);
+        okLabel.addClass("sreview-disabled-option");
+
+        okLabel.append(
+          $("<a>")
+            .attr("id", "video_state_ok_help")
+            .attr("tabindex", "0")
+            .attr("data-toggle", "popover")
+            .attr("data-trigger", "hover")
+            .attr("data-html", "true")
+            .attr("title", "Release requires a review")
+            .attr(
+              "data-content",
+              "<p>No corrections have been applied to this talk yet.</p>"
+                + "<p>Before you can approve it for release, you must review it and apply at least the correct start and end times using this web interface.</p>"
+                + "<p>Once at least one correction round has been submitted, you can come back and mark the talk as perfect.</p>",
+            )
+            .append($("<i>").addClass("fa fa-question-circle")),
+        );
+
+        if (okRadio.is(":checked")) {
+          okRadio.prop("checked", false);
+          notOkRadio.prop("checked", true);
+          notOkRadio.trigger("click");
+        }
+      }
+    })();
+
+    // set the page
+    if ($("input[name=video_state]:checked").val() == "ok") {
+      $(".video_has_problems, .other_brokenness").hide();
+    }
+    if ($("input[name=video_state]:checked").val() == "not_ok") {
+      $(".video_has_problems").show();
+      $(".other_brokenness").hide();
+    }
+    if ($("input[name=video_state]:checked").val() == "other") {
+      $(".video_has_problems").hide();
+      $(".other_brokenness").show();
+    }
+    if ($("input[name=av_sync]:checked").val() == "av_ok") {
+      $("#av_delay").hide();
+    }
+    $("#video_starts_too_early, #video_starts_too_late, #video_ends_too_early, #video_ends_too_late, .restore_original, #av_delay, #no_audio").hide();
+
+    $('[data-toggle="popover"]').popover({
+      container: 'body'
+    });
+
+    // hide and show the problem reporting forms
+    $("input[name=video_state]").click(function() {
+      if ($("input[name=video_state]:checked").val() == "ok") {
+        $(".video_has_problems, .other_brokenness").slideUp();
+      }
+      if ($("input[name=video_state]:checked").val() == "not_ok") {
+        $(".video_has_problems").slideDown();
+        $(".other_brokenness").hide();
+      }
+      if ($("input[name=video_state]:checked").val() == "other") {
+        $(".video_has_problems").hide();
+        $(".other_brokenness").slideDown();
+      }
+    });
+
+    // hide and show the videos for the starting time problems
+    $("input[name=start_time]").click(function() {
+      if ($("input[name=start_time]:checked").val() == "too_early") {
+        $("#video_starts_too_early").slideDown();
+        $("#video_starts_too_late").hide();
+      }
+      if ($("input[name=start_time]:checked").val() == "too_late") {
+        $("#video_starts_too_early").hide();
+        $("#video_starts_too_late").slideDown();
+      }
+      if ($("input[name=start_time]:checked").val() == "start_time_ok") {
+        $("#video_starts_too_early, #video_starts_too_late").fadeOut();
+      }
+    });
+
+    // hide and show the videos for the end time problems
+    $("input[name=end_time]").click(function() {
+      if ($("input[name=end_time]:checked").val() == "too_early") {
+        $("#video_ends_too_early").slideDown();
+        $("#video_ends_too_late").hide();
+      }
+      if ($("input[name=end_time]:checked").val() == "too_late") {
+        $("#video_ends_too_early").hide();
+        $("#video_ends_too_late").slideDown();
+      }
+      if ($("input[name=end_time]:checked").val() == "end_time_ok") {
+        $("#video_ends_too_early, #video_ends_too_late").fadeOut();
+      }
+    });
+
+    function setText(obj, startstop, starttime, endtime) {
+      $(".changemsg").fadeOut();
+      obj.html("<strong>New " + startstop + " time set</strong><p>If you are curious, the new video times are: " + starttime + " to " + endtime + "</p>");
+      obj.fadeIn();
+    };
+
+    function addDate(d, offset) {
+      return new Date(Date.parse(d) + offset * 1000);
+    }
+
+    // the following was taken from https://stackoverflow.com/questions/1267283/how-can-i-pad-a-value-with-leading-zeros
+    function zeroPad(numZeros, num) {
+      var n = Math.abs(num);
+      var zeros = Math.max(0, numZeros - Math.floor(n).toString().length);
+      var zeroString = Math.pow(10,zeros).toString().substr(1);
+      if(num<0) {
+        zeroString = '-' + zeroString;
+      }
+      return zeroString + n;
+    }
+
+
+    function timeFromDate(d) {
+      return new Intl.DateTimeFormat('en-GB', { timeZone: "UTC", hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit", }).format(d) + "." + zeroPad(3, d.getMilliseconds());
+    }
+
+    function setStartTime(msgdiv, corrval) {
+      var newtime = addDate(data.video_start, corrval);
+      setText(msgdiv, "start", timeFromDate(newtime), timeFromDate(data.new_end));
+      $("#start_time_corrval").val(corrval);
+      data.new_start = newtime;
+    }
+
+    function setEndTime(msgdiv, corrval) {
+      var newtime = addDate(data.video_end, corrval);
+      setText(msgdiv, "end", timeFromDate(data.new_start), timeFromDate(newtime));
+      $("#end_time_corrval").val(corrval);
+      data.new_end = newtime;
+    }
+
+    // handle time set button clicks. TODO: generalize this.
+    $("#start_time_early").click(function() {
+      setStartTime($("#msg_start_early"), $("#video-start-early").get(0).currentTime);
+    });
+
+    $("#start-missing, #end-missing").click(function() {
+      $(".changemsg").fadeOut();
+    });
+
+    $("#start_time_late").click(function() {
+      var elem = $("#video-start-late").get(0);
+      if($("#start-missing").is(":checked")) {
+        setStartTime($("#msg_start_late"), 0 - elem.duration);
+      } else {
+        setStartTime($("#msg_start_late"), 0 - (elem.duration - elem.currentTime));
+      }
+    });
+
+    $("#end_time_early").click(function() {
+      if($("#end-missing").is(":checked")) {
+        setEndTime($("#msg_end_early"), $("#video-end-early").get(0).duration);
+      } else {
+        setEndTime($("#msg_end_early"), $("#video-end-early").get(0).currentTime);
+      }
+    });
+
+    $("#end_time_late").click(function() {
+      var elem = $("#video-end-late").get(0);
+      vidend = Date.parse(data.video_start) + elem.duration * 1000;
+      setEndTime($("#msg_end_late"), 0 - (elem.duration - elem.currentTime) - (Date.parse(data.video_end) - vidend) / 1000);
+    });
+
+    // show / hide the no audio options
+    $("input[name=audio_channel]").click(function() {
+      if ($("input[name=audio_channel]:checked").val() == "3") {
+        $("#no_audio").slideDown();
+      }
+      else {
+        $("#no_audio").slideUp();
+      }
+    });
+
+    // restore video option
+    $("#restore_original").click(function(){
+      $(".restore_original").slideDown();
+    });
+    $(".restore_original .btn-link").click(function(){
+      $(".restore_original").fadeOut();
+    });
+
+    $("#restore_original_confirmed").click(function(){
+      $("#complete_reset").val("1");
+      $("#main_form").submit();
+    });
+
+    // hide and show the a/v sync delay form
+    $("input[name=av_sync]").click(function() {
+      if ($("input[name=av_sync]:checked").val() == "av_ok") {
+        $("#av_delay").slideUp();
+      }
+      else {
+        $("#av_delay").slideDown();
+      }
+    });
+
+    $('[data-toggle="popover"]').popover();
+
+  });
+</script>

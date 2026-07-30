@@ -1,0 +1,38 @@
+% if ( $adminspecial ) {
+<div class="alert alert-warning alert-dismissable fade show">
+  <a href="#" class="close" data-dismiss="alert" aria-label="close">&times;</a>
+  <p><strong>Note</strong>: this talk is currently in the state <strong><%= $talk->state %></strong>, <em>not</em> in a state where injecting is normally possible. You can only see this page because you are admin!</p>
+  <p>Please <strong>use caution</strong> when making changes.</p>
+</div>
+% }
+  <h1>
+    <small><%= $talk->eventname =%></small>
+    <%= $talk->title =%>
+  </h1>
+  <div class="row" id="talk_info">
+    <div class="col-sm-12">
+      <dl class="dl-horizontal">
+        <dt>Speakers:</dt>
+        <dd><%= $talk->speakers =%></dd>
+        <dt>Date:<dt>
+        <dd><%= $talk->readable_date =%></dd>
+        <dt>Room:</dt>
+        <dd><%= $talk->room =%></dd>
+      </dl>
+    </div>
+  </div>
+  <form method="POST" action="/i/<%= $talk->nonce =%>/update" enctype="multipart/form-data">
+    <div class="row">
+      <div class="col-sm-4">
+	<label for="video_asset">Video file:</label>
+      </div>
+      <div class="col-sm-8">
+        <input type="file" name="video_asset" id="video_asset"></input>
+      </div>
+    </div>
+    <div class="row">
+      <div class="col-sm-12">
+        <input type="submit" class="btn btn-primary btn-lg" value="Upload"></input>
+      </div>
+    </div>
+  </form>

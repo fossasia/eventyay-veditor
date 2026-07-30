@@ -1,0 +1,37 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+
+use SReview::Config::Common;
+use DBI;
+
+my $config = SReview::Config::Common::setup();
+
+my $records = shift;
+my $qa = shift;
+my $final = shift;
+
+my $db = DBI->connect($config->get("dbistring"));
+
+while(1) {
+	# Ignore final talks where recording exists
+	$db->prepare("UPDATE talks final SET state='ignored', flags = flags::jsonb || '{\"is_injected\":true}'::jsonb FROM talks rec WHERE rec.event = ? AND final.event = ? AND rec.upstreamid = final.upstreamid AND coalesce((rec.flags->>'is_injected')::boolean, false) AND final.state <= 'preview'")->execute($records, $final);
+	# Unignore final talks where no recording exists
+	$db->prepare("UPDATE talks final SET state='waiting_for_files',active_stream='',flags=flags::jsonb - 'is_injected' FROM talks rec WHERE rec.event = ? AND final.event = ? AND rec.upstreamid = final.upstreamid AND coalesce((rec.flags->>'is_injected')::boolean, false) AND final.state = 'ignored'")->execute
+	# Ignore qa talks where no recording exists
+	$db->prepare("UPDATE talks qa SET state='ignored',flags=flags::jsonb - 'is_injected' FROM talks rec WHERE rec.event = ? AND qa.event = ? AND rec.upstreamid = qa.upstreamid AND coalesce((rec.flags->>'is_injected')::boolean, false) = false")->execute($records, $qa);
+	# Unignore qa talks where recording exists
+	$db->prepare("UPDATE talks qa SET state='waiting_for_files',flags=flags::jsonb||'{\"is_injected\":false}'::jsonb FROM talks rec WHERE rec.event = ? AND qa.event = ? AND rec.upstreamid = qa.upstreamid AND coalesce((rec.flags->>'is_injected')::boolean, false) AND qa.state = 'ignored'")->execute($records, $qa);
+	# Create raw files where necessary
+	my $added = $db->prepare("WITH talk AS (SELECT event, starttime, slug, room FROM talks WHERE event=? AND coalesce((flags->>'is_injected')::boolean, false) = true) INSERT INTO raw_files(filename, room, starttime, stream) SELECT '/srv/sreview/web/public/video/' || event || '/' || date_trunc('day', starttime) || '/' || slug || '.mkv', room, starttime, 'injected' FROM talk ON CONFLICT ON CONSTRAINT unique_filename DO NOTHING RETURNING raw_files.filename");
+	$added->execute($records);
+	my $endtime = $db->prepare("UPDATE raw_files SET endtime = starttime + ?::interval WHERE filename = ?");
+	while(my $row = $added->fetchrow_arrayref) {
+		my $filename = $row->[0];
+		next unless(-f $filename);
+		my $vid = SReview::Video->new(url => $filename);
+		$endtime->execute($vid->duration . " seconds", $filename);
+	}
+	sleep(30);
+}

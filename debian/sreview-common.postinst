@@ -1,0 +1,7 @@
+#!/bin/sh
+
+#DEBHELPER#
+
+if ! id sreview > /dev/null 2>&1; then
+    adduser --system --group --home /var/lib/sreview sreview
+fi

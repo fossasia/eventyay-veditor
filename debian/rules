@@ -1,0 +1,15 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@ --with apache2
+
+execute_before_dh_install:
+	chmod +x debian/sreview-master.install debian/sreview-master.dbc
+	chmod -R u+rwX debian/tmp
+
+execute_after_dh_auto_test:
+	node --test t/js/*.test.js
+
+override_dh_installsystemd:
+	dh_installsystemd -psreview-master --name=sreview-dispatch
+	dh_installsystemd --remaining-packages

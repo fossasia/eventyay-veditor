@@ -1,0 +1,98 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+
+use v5.28;
+
+use SReview::Config::Common;
+use Email::Stuffer;
+use Email::Address;
+use Email::Sender::Simple qw/sendmail/;
+use DBI;
+use Text::Format;
+
+my $config = SReview::Config::Common::setup;
+
+my $dbh = DBI->connect($config->get('dbistring'), '', '') or die "Cannot connect to database!";
+my $event = $config->get('event');
+
+my $nonce = shift;
+
+die "Need nonce!" unless defined $nonce;
+
+my $mailers = $dbh->prepare("SELECT * FROM mailers WHERE nonce=?");
+$mailers->execute($nonce) or die "Cannot fetch emails!";
+my $comment = $dbh->prepare("SELECT comment FROM commentlog JOIN talks ON commentlog.talk=talks.id WHERE nonce=? ORDER BY logdate DESC LIMIT 1");
+$comment->execute($nonce) or die "Cannot fetch comments!";
+
+my $formatter = Text::Format->new(firstIndent => 0);
+open my $start, ">", "/tmp/reply-$nonce" or die "Cannot open reply file!";
+print $start "# $nonce\n#\n";
+my $instructions = $formatter->paragraphs("Please reply to this email with your comments. Any use of a '#' character introduces a comment; comments will be removed before sending. If you wish to abort, make sure the word 'ABORT' appears in the (not-commented part of the) reply.\n\nAny (not-commented) lines that appear after the '#----' line will be entered as a comment in the database");
+$instructions .= "\n";
+$instructions =~ s/^/# /gm;
+print $start "$instructions";
+my $para = $formatter->paragraphs("Hi! Someone receiving this email entered this comment into the $event video review system:");
+print $start "$para\n";
+while(my $row = $comment->fetchrow_hashref()) {
+	$para = $formatter->paragraphs($row->{comment});
+	$para =~ s/^/   /gm;
+	print $start "$para\n";
+}
+print $start "#----\n";
+close $start;
+
+system("sensible-editor", "/tmp/reply-$nonce");
+
+my $reply = "";
+my $dbcomment = "";
+my $is_db = 0;
+my $found_db = 0;
+open my $reply_file, "<", "/tmp/reply-$nonce" or die "Cannot open reply file!";
+LINE:
+foreach my $line (<$reply_file>) {
+	if($line =~ /^#----$/) {
+		$is_db = 1;
+	}
+	next if $line =~ /^#/;
+	$line =~ s/#.*//;
+	$reply .= $line;
+	if($is_db) {
+		$dbcomment .= $line;
+		if($line =~ /^.+$/) {
+			$found_db = 1;
+		}
+	}
+}
+close $reply_file;
+unlink "/tmp/reply-$nonce";
+
+if($reply =~ /ABORT/) {
+	exit 0;
+}
+
+if($found_db) {
+	chomp $dbcomment;
+	my $add_comment = $dbh->prepare("WITH talkdata(comment, id, state) AS (SELECT ?, id, state FROM talks WHERE nonce = ?) INSERT INTO commentlog(comment, talk, state) SELECT * FROM talkdata");
+	$add_comment->execute($dbcomment, $nonce) or die $!;
+	$reply .= "\n\n(this comment was also entered into the system)";
+} else {
+	$reply .= "\n\n(this comment was NOT entered into the system)";
+}
+
+my @recips;
+my $title;
+foreach my $mailer (@{$mailers->fetchall_arrayref({})}) {
+	push @recips, Email::Address->new(undef, $mailer->{email});
+	$title = $mailer->{title};
+}
+
+my $subject = "Re: comment regarding talk '$title'";
+
+my $email = Email::Stuffer->from($config->get('email_from'))
+	->to(@recips)
+	->subject($subject)
+	->text_body($reply);
+
+sendmail($email->as_string);

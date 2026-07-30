@@ -1,0 +1,5 @@
+usr/bin/sreview-detect
+usr/bin/sreview-import
+usr/share/man/man1/sreview-detect*
+usr/share/man/man1/sreview-import*
+usr/share/perl5/SReview/Schedule/

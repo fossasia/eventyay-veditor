@@ -1,0 +1,5 @@
+% use YAML::XS;
+% push @$env, { name => "SREVIEW_DBISTRING", valueFrom => { secretKeyRef => { key => "SREVIEW_DBISTRING", name => $secretname } } };
+% unshift @$args, $command;
+% my %data = ( apiVersion => "kubequeue.grep.be/v1", kind => "JobEntry", metadata => { name => "sreview-$jobsuffix" }, spec => { defName => "sreview-job-def", extraArgs => $args, extraEnv => $env } );
+<%= Dump(\%data); %>

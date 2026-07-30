@@ -1,0 +1,29 @@
+services:
+
+  web:
+    build:
+      context: .
+      dockerfile: ./dockerfiles/web/local.Dockerfile
+    volumes:
+      - ./web/:/usr/share/sreview/
+      - ./lib/:/usr/local/lib/site_perl/
+      - ./scripts/:/usr/src/scripts/
+      - ./dev-incoming/:/srv/sreview/incoming/
+      - ./dev-script-output/:/srv/sreview/script-output/
+      - ./dev-output/:/srv/sreview/output/
+    ports:
+      - 3000:3000
+    depends_on:
+      - db
+
+  db:
+    image: postgres:17.2
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    environment:
+      - POSTGRES_USER=sreviewuser
+      - POSTGRES_PASSWORD=sreviewpassword
+      - POSTGRES_DB=sreviewdb
+
+volumes:
+  postgres_data:

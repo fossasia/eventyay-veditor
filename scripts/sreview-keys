@@ -1,0 +1,134 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+
+use SReview::Model::Event;
+use Net::SSH::AuthorizedKeysFile;
+use Net::SSH::AuthorizedKey;
+use Getopt::Long;
+use Pod::Usage;
+
+use SReview::Config::Common;
+
+die 'Need $HOME to be set!' unless exists($ENV{HOME});
+
+my $config = SReview::Config::Common::setup;
+
+my $eventname = $config->get('event');
+my $action = "add";
+my $oknodo = 0;
+my $help = 0;
+my $keyfile = undef;
+my $bindir = $ENV{HOME} . "/bin";
+
+GetOptions(
+	"event|e=s" => \$eventname,
+	"action|a=s" => \$action,
+	"help" => \$help,
+	"oknodo|o" => \$oknodo,
+	"file|f=s" => \$keyfile,
+) or pod2usage("command line invalid");
+
+=head1 NAME
+
+sreview-keys - manage keys in SReview's C<authorized_keys> file.
+
+=head1 SYNOPSIS
+
+  sreview-keys --event="event name" --action="add" --file=./id_rsa.pub
+  sreview-keys -a "remove" --file=./id_rsa.pub
+
+=head1 DESCRIPTION
+
+sreview-keys is a simple tool to manage keys in an C<authorized_keys>
+file so that when you run C<rsync> to sync input data to the SReview
+master server, the files are written to that event's own input directory
+(and not elsewhere).
+
+The default event name is taken from the SReview configuration file (see
+L<sreview-config>, or it can be overridden with C<--event> (alias:
+C<-e>).
+
+The default action is to add a key; to remove one, either edit the file,
+or use the C<--action=remove> (alias: C<-a remove>) option.
+
+=cut
+
+if($help) {
+	pod2usage(0);
+}
+
+if(!defined($keyfile)) {
+	pod2usage("key file not specified");
+}
+
+if($action ne "add" && $action ne "remove") {
+	print STDERR "Unknown action: $action\n";
+	exit 1;
+}
+
+my $event = SReview::Model::Event->new(config => $config, name => $eventname);
+
+my $akf = Net::SSH::AuthorizedKeysFile->new();
+my $file = $config->get('authkeyfile');
+$akf->read($file);
+
+open KEY, "<", $keyfile;
+my $mkey = "";
+while(<KEY>) {
+	chomp;
+	$mkey .= $_;
+}
+close KEY;
+
+$mkey = Net::SSH::AuthorizedKey->parse($mkey);
+
+my @newkeys = ();
+
+foreach my $key($akf->keys()) {
+	if($key->fingerprint() eq $mkey->fingerprint()) {
+		if($action eq "add") {
+			if(!$oknodo) {
+				print STDERR "The provided key already exists in the file! Please remove it first\n";
+				exit 1;
+			} else {
+				print "Key already added, ignoring\n";
+				exit 0;
+			}
+		} else {
+			# don't add to @mkeys
+			next;
+		}
+	}
+	push @newkeys, $key;
+}
+
+if($action eq "add") {
+	if(! -x "$bindir/rrsync") {
+		print STDERR "E: please install rrsync as $bindir/rrsync, and make sure it's executable (hint: /usr/share/doc/rsync/scripts/rrsync.gz)";
+		exit 1;
+	}
+	my $iglob = $config->get('inputglob');
+	my @input = split('/', $iglob);
+	my @dirs = ();
+	foreach my $in(@input) {
+		if($in =~ /\*/) {
+			last;
+		}
+		push @dirs, $in;
+	}
+	$mkey->option("command", "$bindir/rrsync '" . join('/', @dirs, $event->inputdir) . "'", 1);
+	$mkey->option("no-agent-forwarding", 1, 1);
+	$mkey->option("no-port-forwarding", 1, 1);
+	$mkey->option("no-pty", 1, 1);
+	$mkey->option("no-user-rc", 1, 1);
+	$mkey->option("no-X11-forwarding", 1, 1);
+	push @newkeys, $mkey;
+}
+
+if(!defined($file)) {
+	$file = $akf->path_locate;
+}
+$akf = Net::SSH::AuthorizedKeysFile->new(keys => \@newkeys, file => $file);
+$akf->save();

@@ -1,0 +1,215 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+
+use v5.28;
+
+use SReview::Config::Common;
+use DBI;
+use JSON;
+use DateTime::Format::Pg;
+
+=head1 NAME
+
+sreview-import - Import an event schedule from an event's upstream
+
+=head1 SYNOPSIS
+
+sreview-import
+
+=head1 DESCRIPTION
+
+C<sreview-import> instantiates a C<schedule_format> schedule parser, and
+makes sure that first, all events and talks in the parsed schedule exist
+in the SReview database, and second, that all events and talks which
+exist in the SReview database for a found event but which do I<not>
+exist in the parsed schedule are marked as C<ignored>. Parsers are implemented
+as classes under the C<SReview::Schedule::> namespace; e.g., the
+L<SReview::Schedule::Penta> class implements the C<penta> parser.
+
+The location of the event schedule is to be passed to the schedule
+parser using the relevant option of that parser; most support the C<url>
+option for a URL.
+
+=head1 CONFIGURATION
+
+C<sreview-import> considers the following configuration values:
+
+=over
+
+=cut
+
+my $config = SReview::Config::Common::setup;
+
+=item dbistring
+
+The DBI string used to connect to the database. Required.
+
+=cut
+
+my $dbh = DBI->connect($config->get('dbistring'), '', '') or die 'Cannot connect to database!';
+
+=item schedule_format
+
+The format of the schedule. Required. Must be implemented as a subclass
+of C<SReview::Schedule::Base>.
+
+=cut
+
+my $format = $config->get('schedule_format');
+my $pclass = 'SReview::Schedule::' . ucfirst($format);
+
+eval "require $pclass;" or die "Could not load schedule parser for format $format: $@\n";
+
+=item schedule_options
+
+Any options to be provided to the parser. Should be a hash; which keys
+are supported depends on the relevant parser. See the parser's
+documentation for details (e.g., L<SReview::Schedule::Penta> for the
+C<penta> parser.
+
+=cut
+
+my $opts = $config->get('schedule_options');
+
+my $parser = "$pclass"->new(%$opts);
+
+my $update_talk = $dbh->prepare("UPDATE talks SET room = ?, slug = ?, starttime = ?::timestamptz, endtime = ?::timestamptz, title = ?, subtitle = ?, track = ?, extra_data = ?::jsonb WHERE id = ?");
+my $search_room = $dbh->prepare("SELECT id FROM rooms WHERE name = ?");
+my $add_room = $dbh->prepare("INSERT INTO rooms(name, altname, outputname) VALUES(?, ?, ?) RETURNING id");
+my $update_room = $dbh->prepare("UPDATE rooms SET altname = ?, outputname = ? WHERE name = ?");
+my $add_track = $dbh->prepare("INSERT INTO tracks(name, email, upstreamid) VALUES(?, ?, ?) RETURNING id");
+my $update_track = $dbh->prepare("UPDATE tracks SET name = ?, email = ? WHERE upstreamid = ?");
+my $add_talk = $dbh->prepare("INSERT INTO talks(room, slug, starttime, endtime, title, event, upstreamid, subtitle, track, description, extra_data) VALUES(?, ?, ?::timestamptz, ?::timestamptz, ?, ?, ?, ?, ?, ?, ?::jsonb) RETURNING id");
+my $set_flags = $dbh->prepare("UPDATE talks SET flags = COALESCE(flags::jsonb || ?::jsonb, ?::jsonb) WHERE id = ?");
+my $search_speaker = $dbh->prepare("SELECT id FROM speakers WHERE upstreamid = ? AND event = ?");
+my $update_speaker = $dbh->prepare("UPDATE speakers SET name = ?, email = ? WHERE upstreamid = ?");
+my $add_speaker = $dbh->prepare("INSERT INTO speakers(email, name, upstreamid, event) VALUES(?, ?, ?, ?) RETURNING id");
+my $clear_speakers = $dbh->prepare("DELETE FROM speakers_talks WHERE talk = ?");
+my $link_speaker = $dbh->prepare("INSERT INTO speakers_talks(speaker, talk) VALUES (?, ?) ON CONFLICT ON CONSTRAINT speakers_talks_pkey DO NOTHING");
+my $ignore_talk = $dbh->prepare("UPDATE talks SET state='ignored' WHERE id = ? AND state <= 'waiting_for_files'");
+my $unignore_talk = $dbh->prepare("UPDATE talks SET state='waiting_for_files' WHERE id = ? AND state = 'ignored'");
+my $all_talks = $dbh->prepare("SELECT id, upstreamid FROM talks WHERE event = ?");
+my $all_tracks = $dbh->prepare("SELECT id, upstreamid FROM tracks");
+
+foreach my $event(@{$parser->events}) {
+	my $st = $dbh->prepare("SELECT id FROM events WHERE name = ?");
+	$st->execute($event->name) or die $!;
+	if($st->rows > 1) {
+		warn "Multiple events with name \"" . $event->name . "\", proceeding with first found one.\n";
+	} elsif($st->rows == 0) {
+		$st = $dbh->prepare("INSERT INTO events(name) VALUES(?) RETURNING id");
+		$st->execute($event->name) or die $!;
+	} else {
+		$st = $dbh->prepare("SELECT id FROM events WHERE name = ?");
+		$st->execute($event->name) or die $!;
+	}
+	my $row = $st->fetchrow_arrayref;
+	my $eventid = $row->[0];
+
+	my %known_talks;
+	my %roomid;
+	my %trackid;
+	$all_talks->execute($eventid) or die $!;
+        ALL_TALKS:
+	while($row = $all_talks->fetchrow_arrayref) {
+                next ALL_TALKS if(!defined($row->[0]) || !defined($row->[1]));
+		$known_talks{$row->[1]} = $row->[0];
+	}
+	$all_tracks->execute or die $!;
+	while($row = $all_tracks->fetchrow_arrayref) {
+		$trackid{$row->[1]} = $row->[0];
+	}
+	foreach my $talk(@{$event->talks}) {
+                eval {
+                        # This loop is required; otherwise, we get a "Exiting eval via next" warning
+                        TALK:
+                        for my $unused([1]) {
+                                next TALK if $talk->filtered;
+                                $dbh->begin_work;
+                                my $room;
+                                if(exists($roomid{$talk->room->name})) {
+                                        $room = $roomid{$talk->room->name};
+                                } else {
+                                        $search_room->execute($talk->room->name) or die $!;
+                                        if($search_room->rows > 1) {
+                                                warn "Multiple rooms with name \"" . $talk->room->name . "\", proceeding with first found one.\n";
+                                        } elsif($search_room->rows == 0) {
+                                                $add_room->execute($talk->room->name, $talk->room->altname, $talk->room->outputname) or die $!;
+                                                $row = $add_room->fetchrow_arrayref;
+                                        } else {
+                                                $row = $search_room->fetchrow_arrayref;
+                                                if(defined($talk->room->altname) || defined($talk->room->outputname)) {
+                                                        $update_room->execute($talk->room->altname, $talk->room->outputname, $talk->room->name);
+                                                }
+                                        }
+                                        $room = $row->[0];
+                                        $roomid{$talk->room->name} = $room;
+                                }
+                                my $track = $talk->track;
+                                if(defined($track)) {
+                                        if(exists($trackid{$talk->track->upstreamid})) {
+                                                $track = $trackid{$talk->track->upstreamid};
+                                                if(defined($talk->track->email)) {
+                                                        $update_track->execute($talk->track->name, $talk->track->email, $talk->track->upstreamid);
+                                                }
+                                        } else {
+                                                $add_track->execute($talk->track->name, $talk->track->email, $talk->track->upstreamid) or die $!;
+                                                $row = $add_track->fetchrow_arrayref;
+                                                $track = $row->[0];
+                                                $trackid{$talk->track->upstreamid} = $track;
+                                        }
+                                }
+                                my $talkid;
+                                if(exists($known_talks{$talk->upstreamid})) {
+                                        $update_talk->execute($room, $talk->slug, DateTime::Format::Pg->format_timestamptz($talk->starttime), DateTime::Format::Pg->format_timestamptz($talk->endtime), $talk->title, $talk->subtitle, $track, $talk->extra_data, $known_talks{$talk->upstreamid}) or die $!;
+                                        $talkid = $known_talks{$talk->upstreamid};
+                                        $unignore_talk->execute($known_talks{$talk->upstreamid});
+                                        delete $known_talks{$talk->upstreamid};
+                                } else {
+                                        $add_talk->execute($room, $talk->slug, DateTime::Format::Pg->format_timestamptz($talk->starttime), DateTime::Format::Pg->format_timestamptz($talk->endtime), $talk->title, $eventid, $talk->upstreamid, $talk->subtitle, $track, $talk->description, $talk->extra_data) or die $!;
+                                        $row = $add_talk->fetchrow_arrayref;
+                                        $talkid = $row->[0];
+                                }
+                                if(defined($talk->flags)) {
+                                        my $flags = { %{$talk->flags} };
+                                        foreach my $flag(keys %$flags) {
+                                                if($flags->{$flag}) {
+                                                        $flags->{$flag} = $JSON::true;
+                                                } else {
+                                                        $flags->{$flag} = $JSON::false;
+                                                }
+                                        }
+                                        $flags = encode_json($flags);
+                                        $set_flags->execute($flags, $flags, $talkid);
+                                }
+                                $clear_speakers->execute($talkid) or die $!;
+                                foreach my $speaker(@{$talk->speakers}) {
+                                        $search_speaker->execute($speaker->upstreamid, $eventid) or die $!;
+                                        if($search_speaker->rows > 1) {
+                                                warn "Multiple speakers with upstream ID \"" . $speaker->upstreamid . "\", proceeding with first found one.\n";
+                                        } elsif($search_speaker->rows == 0) {
+                                                $add_speaker->execute($speaker->email, $speaker->name, $speaker->upstreamid, $eventid) or die $!;
+                                                $row = $add_speaker->fetchrow_arrayref;
+                                        } else {
+                                                $row = $search_speaker->fetchrow_arrayref;
+                                                if(defined($speaker->email)) {
+                                                        $update_speaker->execute($speaker->name, $speaker->email, $speaker->upstreamid);
+                                                }
+                                        }
+                                        my $speakerid = $row->[0];
+                                        $link_speaker->execute($speakerid, $talkid) or die $!;
+                                }
+                                $dbh->commit;
+                        }
+                };
+                if($@) {
+                        say "Rolling back update of a talk due to schedule parser error: $@";
+                        $dbh->rollback;
+                }
+	}
+	foreach my $talkid(values %known_talks) {
+		$ignore_talk->execute($talkid);
+	}
+}

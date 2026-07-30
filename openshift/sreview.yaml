@@ -1,0 +1,733 @@
+apiVersion: v1
+kind: Template
+metadata:
+  name: sreview
+  annotations:
+    iconClass: icon-perl
+    description: The SReview online video review system was originally written
+        for FOSDEM, but has been used by DebConf and a number of other
+        conferences. It automates as much of the postprocessing workflow as
+        possible, using human interaction only when absolutely necessary.
+
+        This template creates an SReview installation that stores
+        everything inside the OpenShift environment, including object
+        storage and the PostgreSQL database. It does not create
+        backups; if wanted, those should be set up separately.
+    openshift.io/display-name: SReview
+    openshift.io/documentation-url: https://yoe.github.io/SReview
+    openshift.io/provider-display-name: Wouter Verhelst
+objects:
+# Image streams
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    name: sreview-build
+  spec:
+    lookupPolicy:
+      local: true
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    name: sreview-common
+  spec:
+    lookupPolicy:
+      local: true
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    name: sreview-detect
+  spec:
+    lookupPolicy:
+      local: true
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    name: sreview-encoder
+  spec:
+    lookupPolicy:
+      local: true
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    name: sreview-master
+  spec:
+    lookupPolicy:
+      local: true
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    name: sreview-master-kube
+  spec:
+    lookupPolicy:
+      local: true
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    name: sreview-web
+  spec:
+    lookupPolicy:
+      local: true
+# Builds
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    name: sreview-build
+  spec:
+    source:
+      git:
+        uri: "https://salsa.debian.org/debconf-video-team/sreview.git"
+        ref: ${GIT_REF}
+      dockerfile: |
+        FROM debian:testing
+        RUN mkdir /sreview
+        COPY . /sreview/
+        RUN apt-get update  \
+                && apt-get -y --no-install-recommends install devscripts equivs build-essential git \
+                && cd /sreview \
+                && mk-build-deps -r -i -t 'apt-get -y -o Debug::pkgProblemResolver=yes --no-install-recommends' \
+                && dpkg-buildpackage -uc -us -i -I.git \
+                && sed -i -e "/^ARG/d;/@git_describe@/d" dockerfiles/*/Dockerfile \
+                && sed -i -e 's,^COPY.*$,ADD packages.tar.gz /root/,' dockerfiles/common/Dockerfile \
+                && apt-get -y --purge autoremove \
+                && cd .. \
+                && tar cvf /packages.tar.gz *.deb
+    strategy:
+      dockerStrategy:
+        from:
+          kind: DockerImage
+          name: "debian:testing"
+    output:
+      to:
+        kind: ImageStreamTag
+        name: sreview-build:${GIT_REF}
+    triggers:
+    - type: ConfigChange
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    name: sreview-common
+  spec:
+    source:
+      git:
+        uri: "https://salsa.debian.org/debconf-video-team/sreview.git"
+        ref: ${GIT_REF}
+      contextDir: dockerfiles/common
+      images:
+      - from:
+          kind: ImageStreamTag
+          name: sreview-build:${GIT_REF}
+        paths:
+        - destinationDir: dockerfiles/common
+          sourcePath: "/packages.tar.gz"
+        - destinationDir: dockerfiles/common
+          sourcePath: "/sreview/dockerfiles/common/Dockerfile"
+    strategy:
+      dockerStrategy:
+        from:
+          kind: DockerImage
+          name: "debian:testing"
+    output:
+      to:
+        kind: ImageStreamTag
+        name: sreview-common:${GIT_REF}
+    triggers:
+    - type: ConfigChange
+    - type: ImageChange
+      imageChange:
+        from:
+          kind: ImageStreamTag
+          name: sreview-build:${GIT_REF}
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    name: sreview-detect
+  spec:
+    source:
+      git:
+        uri: "https://salsa.debian.org/debconf-video-team/sreview.git"
+        ref: ${GIT_REF}
+      contextDir: dockerfiles/detect
+      images:
+      - from:
+          kind: ImageStreamTag
+          name: sreview-build:${GIT_REF}
+        paths:
+        - destinationDir: dockerfiles/detect
+          sourcePath: "/sreview/dockerfiles/detect/Dockerfile"
+    strategy:
+      dockerStrategy:
+        from:
+          kind: ImageStreamTag
+          name: sreview-common:${GIT_REF}
+    output:
+      to:
+        kind: ImageStreamTag
+        name: sreview-detect:${GIT_REF}
+    triggers:
+    - type: ConfigChange
+    - type: ImageChange
+      imageChange:
+        from:
+          kind: ImageStreamTag
+          name: sreview-common:${GIT_REF}
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    name: sreview-master
+  spec:
+    source:
+      git:
+        uri: "https://salsa.debian.org/debconf-video-team/sreview.git"
+        ref: ${GIT_REF}
+      contextDir: dockerfiles/master
+      images:
+      - from:
+          kind: ImageStreamTag
+          name: sreview-build:${GIT_REF}
+        paths:
+        - destinationDir: dockerfiles/master
+          sourcePath: "/sreview/dockerfiles/master/Dockerfile"
+    strategy:
+      dockerStrategy:
+        from:
+          kind: ImageStreamTag
+          name: sreview-common:${GIT_REF}
+    output:
+      to:
+        kind: ImageStreamTag
+        name: sreview-master:${GIT_REF}
+    triggers:
+    - type: ConfigChange
+    - type: ImageChange
+      imageChange:
+        from:
+          kind: ImageStreamTag
+          name: sreview-common:${GIT_REF}
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    name: sreview-master-kube
+  spec:
+    source:
+      git:
+        uri: "https://salsa.debian.org/debconf-video-team/sreview.git"
+        ref: ${GIT_REF}
+      contextDir: dockerfiles/master-kube
+      images:
+      - from:
+          kind: ImageStreamTag
+          name: sreview-build:${GIT_REF}
+        paths:
+        - destinationDir: dockerfiles/master-kube
+          sourcePath: "/sreview/dockerfiles/master-kube/Dockerfile"
+    strategy:
+      dockerStrategy:
+        from:
+          kind: ImageStreamTag
+          name: sreview-master:${GIT_REF}
+    output:
+      to:
+        kind: ImageStreamTag
+        name: sreview-master-kube:${GIT_REF}
+    triggers:
+    - type: ConfigChange
+    - type: ImageChange
+      imageChange:
+        from:
+          kind: ImageStreamTag
+          name: sreview-master:${GIT_REF}
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    name: sreview-web
+  spec:
+    source:
+      git:
+        uri: "https://salsa.debian.org/debconf-video-team/sreview.git"
+        ref: ${GIT_REF}
+      contextDir: dockerfiles/web
+      images:
+      - from:
+          kind: ImageStreamTag
+          name: sreview-build:${GIT_REF}
+        paths:
+        - destinationDir: dockerfiles/web
+          sourcePath: "/sreview/dockerfiles/web/Dockerfile"
+    strategy:
+      dockerStrategy:
+        from:
+          kind: ImageStreamTag
+          name: sreview-common:${GIT_REF}
+    output:
+      to:
+        kind: ImageStreamTag
+        name: sreview-web:${GIT_REF}
+    triggers:
+    - type: ConfigChange
+    - type: ImageChange
+      imageChange:
+        from:
+          kind: ImageStreamTag
+          name: sreview-common:${GIT_REF}
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    name: sreview-encoder
+  spec:
+    source:
+      git:
+        uri: "https://salsa.debian.org/debconf-video-team/sreview.git"
+        ref: ${GIT_REF}
+      contextDir: dockerfiles/encoder
+      images:
+      - from:
+          kind: ImageStreamTag
+          name: sreview-build:${GIT_REF}
+        paths:
+        - destinationDir: dockerfiles/encoder
+          sourcePath: "/sreview/dockerfiles/encoder/Dockerfile"
+    strategy:
+      dockerStrategy:
+        from:
+          kind: ImageStreamTag
+          name: sreview-common:${GIT_REF}
+    output:
+      to:
+        kind: ImageStreamTag
+        name: sreview-encoder:${GIT_REF}
+    triggers:
+    - type: ConfigChange
+    - type: ImageChange
+      imageChange:
+        from:
+          kind: ImageStreamTag
+          name: sreview-common:${GIT_REF}
+# Configuration
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: sreview-secret
+  type: Opaque
+  stringData:
+    SREVIEW_ADMINPW: '"${SREVIEW_ADMINPW}"'
+    SREVIEW_DBPASS: '${SREVIEW_DBPASS}'
+    SREVIEW_DBISTRING: '"dbi:Pg:dbname=sreview;host=sreview-database;user=sreview;password=${SREVIEW_DBPASS}"'
+    SREVIEW_SECRET: '"${SREVIEW_SECRET}"'
+    SREVIEW_API_KEY: '"${SREVIEW_API_KEY}"'
+    MINIO_SECRET_KEY: "${MINIO_SECRET_KEY}"
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: sreview-config
+  data: 
+    SREVIEW_URLBASE: '"${SREVIEW_HOST}"'
+    SREVIEW_WEB_PID_FILE: '"/tmp/sreview-web.pid"'
+    SREVIEW_ACCESSMETHODS: '{"input":"S3","intermediate":"S3","output":"S3"}'
+    SREVIEW_S3_ACCESS_CONFIG: '{"default":{"aws_access_key_id":"adminuser","aws_secret_access_key":"${MINIO_SECRET_KEY}","secure":0,"host":"sreview-storage:9000"}}'
+    SREVIEW_ENCODER_IMAGE: sreview-encoder:${GIT_REF}
+    SREVIEW_INPUTGLOB: '"input/*"'
+    SREVIEW_PUBDIR: '"inter"'
+    SREVIEW_OUTPUTDIR: '"output"'
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: postgresdata
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 100Mi
+- apiVersion: apps/v1
+  kind: StatefulSet
+  metadata:
+    name: sreview-database
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        name: sreview-database
+    serviceName: sreview-database
+    template:
+      metadata:
+        labels:
+          name: sreview-database
+      spec:
+        containers:
+        - name: postgres
+          image: postgres:latest
+          env:
+          - name: PGDATA
+            value: "/var/lib/postgresql/data/db"
+          - name: POSTGRES_USER
+            value: sreview
+          - name: POSTGRES_DB
+            value: sreview
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: sreview-secret
+                key: SREVIEW_DBPASS
+          ports:
+          - containerPort: 5432
+            name: postgresql
+          volumeMounts:
+          - mountPath: "/var/lib/postgresql/data"
+            name: "postgresdata"
+        volumes:
+        - name: "postgresdata"
+          persistentVolumeClaim:
+            claimName: "postgresdata"
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: sreview-database
+    labels:
+      name: sreview-database
+  spec:
+    ports:
+    - port: 5432
+      name: postgresql
+    clusterIP: None
+    selector:
+      name: sreview-database
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: minio
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+# Storage
+- apiVersion: apps/v1
+  kind: StatefulSet
+  metadata:
+    name: sreview-storage
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: sreview-storage
+    serviceName: "sreview-storage"
+    template:
+      metadata:
+        labels:
+          app: sreview-storage
+      spec:
+        containers:
+        - name: minio
+          image: minio/minio
+          volumeMounts:
+          - mountPath: "/data"
+            name: "minio"
+          ports:
+          - containerPort: 9000
+            name: minio
+          args:
+          - server
+          - "/data"
+          env:
+          - name: MINIO_ACCESS_KEY
+            value: adminuser
+          - name: MINIO_SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                name: sreview-secret
+                key: MINIO_SECRET_KEY
+        volumes:
+        - name: "minio"
+          persistentVolumeClaim:
+            claimName: "minio"
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: sreview-storage
+    labels:
+      app: sreview-storage
+  spec:
+    ports:
+    - port: 9000
+      name: minio
+    clusterIP: None
+    selector:
+      app: sreview-storage
+- apiVersion: v1
+  kind: Route
+  metadata:
+    name: sreview-storage
+  spec:
+    host: ${STORAGE_HOST}
+    port:
+      targetPort: minio
+    tls:
+      insecureEdgeTerminationPolicy: Redirect
+      termination: edge
+    to:
+      kind: Service
+      name: sreview-storage
+# Main loop
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    name: sreview-web
+  spec:
+    replicas: 3
+    triggers:
+    - type: "ConfigChange"
+    - type: "ImageChange"
+      imageChangeParams:
+        automatic: true
+        containerNames:
+        - "web"
+        from:
+          kind: ImageStreamTag
+          name: sreview-web:${GIT_REF}
+    template:
+      metadata:
+        labels:
+          name: sreview-web
+      spec:
+        containers:
+        - name: web
+          image: sreview-web:${GIT_REF}
+          envFrom:
+          - configMapRef:
+              name: sreview-config
+          env:
+          - name: SREVIEW_ADMINPW
+            valueFrom:
+              secretKeyRef:
+                name: sreview-secret
+                key: SREVIEW_ADMINPW
+          - name: SREVIEW_DBISTRING
+            valueFrom:
+              secretKeyRef:
+                name: sreview-secret
+                key: SREVIEW_DBISTRING
+          - name: SREVIEW_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: sreview-secret
+                key: SREVIEW_SECRET
+          - name: SREVIEW_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: sreview-secret
+                key: SREVIEW_API_KEY
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+- apiVersion: v1
+  kind: Route
+  metadata:
+    name: sreview-web
+  spec:
+    host: ${SREVIEW_HOST}
+    port:
+      targetPort: http
+    tls:
+      insecureEdgeTerminationPolicy: Redirect
+      termination: edge
+    to:
+      kind: Service
+      name: sreview-web
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: sreview-web
+  spec:
+    type: NodePort
+    selector:
+      name: sreview-web
+    ports:
+    - name: http
+      protocol: TCP
+      port: 8080
+      targetPort: 8080
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: sreview-master
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: Role
+  metadata:
+    name: manage-jobs
+  rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "watch","list"]
+  - apiGroups: ["batch", "extensions"]
+    resources: ["jobs"]
+    verbs: ["create","list","watch","get","update","patch","delete"]
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: RoleBinding
+  metadata:
+    name: manage-jobs
+  subjects:
+  - kind: ServiceAccount
+    name: sreview-master
+    apiGroup: ""
+  roleRef:
+    kind: Role
+    name: manage-jobs
+    apiGroup: rbac.authorization.k8s.io
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    name: sreview-master
+  spec:
+    replicas: 1
+    triggers:
+    - type: "ConfigChange"
+    - type: "ImageChange"
+      imageChangeParams:
+        automatic: true
+        containerNames:
+        - "master"
+        from:
+          kind: ImageStreamTag
+          name: sreview-master-kube:${GIT_REF}
+    template:
+      metadata:
+        labels:
+          name: sreview-master
+      spec:
+        serviceAccountName: sreview-master
+        containers:
+        - name: master
+          image: sreview-master-kube:${GIT_REF}
+          imagePullPolicy: Always
+          envFrom:
+          - configMapRef:
+              name: sreview-config
+          env:
+          - name: SREVIEW_DBISTRING
+            valueFrom:
+              secretKeyRef:
+                name: sreview-secret
+                key: SREVIEW_DBISTRING
+- apiVersion: batch/v1beta1
+  kind: CronJob
+  metadata:
+    name: detect
+  spec:
+    concurrencyPolicy: Forbid
+    schedule: 0,30 * * * *
+    jobTemplate:
+      metadata:
+        labels:
+          app: sreview-detect
+      spec:
+        template:
+          metadata:
+            labels:
+              app: sreview-detect
+          spec:
+            restartPolicy: OnFailure
+            containers:
+            - name: detect
+              image: sreview-detect:${GIT_REF}
+              imagePullPolicy: Always
+              command: ["/usr/bin/sreview-detect"]
+              envFrom:
+              - configMapRef:
+                  name: sreview-config
+              env:
+              - name: SREVIEW_DBISTRING
+                valueFrom:
+                  secretKeyRef:
+                    name: sreview-secret
+                    key: SREVIEW_DBISTRING
+- apiVersion: batch/v1beta1
+  kind: CronJob
+  metadata:
+    name: import
+  spec:
+    concurrencyPolicy: Forbid
+    schedule: 0,30 * * * *
+    jobTemplate:
+      metadata:
+        labels:
+          app: sreview-import
+      spec:
+        template:
+          metadata:
+            labels:
+              app: sreview-import
+          spec:
+            restartPolicy: OnFailure
+            containers:
+            - name: import
+              image: sreview-detect:${GIT_REF}
+              imagePullPolicy: Always
+              command: ["/usr/bin/sreview-import"]
+              envFrom:
+              - configMapRef:
+                  name: sreview-config
+              env:
+              - name: SREVIEW_DBISTRING
+                valueFrom:
+                  secretKeyRef:
+                    name: sreview-secret
+                    key: SREVIEW_DBISTRING
+parameters:
+- description: SReview git reference (branch or tag) to base installation on
+  displayName: Git reference
+  name: GIT_REF
+  value: main
+  required: true
+- description: Password for the administrator user
+  displayName: Administrator password
+  name: SREVIEW_ADMINPW
+  generate: expression
+  from: "[a-zA-Z0-9]{16}"
+  required: true
+- description: Database password
+  displayName: Database password
+  name: SREVIEW_DBPASS
+  required: true
+  generate: expression
+  from: "[a-zA-Z0-9]{80}"
+  required: true
+- description: Secret used to sign/encrypt cookies for session handling.
+  displayName: Cookie secret
+  name: SREVIEW_SECRET
+  generate: expression
+  from: "[a-zA-Z0-9]{80}"
+  required: true
+- description: API key for access to the REST API (as administrator)
+  displayName: API key
+  name: SREVIEW_API_KEY
+  generate: expression
+  from: "[a-zA-Z0-9]{80}"
+  required: true
+- description: Password to access the assets storage
+  displayName: Minio password
+  name: MINIO_SECRET_KEY
+  generate: expression
+  from: "[a-zA-Z0-9]{80}"
+  required: true
+- name: STORAGE_HOST
+  displayName: Assets storage hostname
+  description: The hostname on which the S3-compatible storage backend will be deployed
+  value: storage.example.com
+  required: true
+- name: SREVIEW_HOST
+  displayName: SReview hostname
+  description: The hostname on which SReview will be deployed
+  value: sreview.example.com
+  required: true
+message: |
+  Passwords are:
+  - Administrator password:
+  ${SREVIEW_ADMINPW}
+  - Database password:
+  ${SREVIEW_DBPASS}
+  - API key:
+  ${SREVIEW_API_KEY}
+  - Storage password:
+  ${MINIO_SECRET_KEY}

@@ -1,0 +1,301 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<canvas version="1.2" width="1280" height="720" xres="2834.645669" yres="2834.645669" gamma-r="1.000000" gamma-g="1.000000" gamma-b="1.000000" view-box="-10.666667 6.000000 10.666667 -6.000000" antialias="1" fps="24.000" begin-time="0f" end-time="5s" bgcolor="0.500000 0.500000 0.500000 1.000000">
+  <name>animated.sif</name>
+  <meta name="background_first_color" content="0.880000 0.880000 0.880000"/>
+  <meta name="background_rendering" content="0"/>
+  <meta name="background_second_color" content="0.650000 0.650000 0.650000"/>
+  <meta name="background_size" content="15.000000 15.000000"/>
+  <meta name="grid_color" content="0.623529 0.623529 0.623529"/>
+  <meta name="grid_show" content="0"/>
+  <meta name="grid_size" content="0.250000 0.250000"/>
+  <meta name="grid_snap" content="0"/>
+  <meta name="guide_color" content="0.435294 0.435294 1.000000"/>
+  <meta name="guide_show" content="1"/>
+  <meta name="guide_snap" content="0"/>
+  <meta name="jack_offset" content="0.000000"/>
+  <meta name="onion_skin" content="0"/>
+  <meta name="onion_skin_future" content="0"/>
+  <meta name="onion_skin_keyframes" content="1"/>
+  <meta name="onion_skin_past" content="1"/>
+  <keyframe time="0f" active="true"/>
+  <keyframe time="1s" active="true"/>
+  <keyframe time="5s" active="true"/>
+  <layer type="SolidColor" active="true" exclude_from_rendering="false" version="0.1" desc="Background">
+    <param name="z_depth">
+      <real value="0.0000000000"/>
+    </param>
+    <param name="amount">
+      <real value="1.0000000000"/>
+    </param>
+    <param name="blend_method">
+      <integer value="0" static="true"/>
+    </param>
+    <param name="color">
+      <color>
+        <r>1.000000</r>
+        <g>1.000000</g>
+        <b>1.000000</b>
+        <a>1.000000</a>
+      </color>
+    </param>
+  </layer>
+  <layer type="text" active="true" exclude_from_rendering="false" version="0.5" desc="title">
+    <param name="z_depth">
+      <real value="0.0000000000"/>
+    </param>
+    <param name="amount">
+      <real value="1.0000000000"/>
+    </param>
+    <param name="blend_method">
+      <integer value="0" static="true"/>
+    </param>
+    <param name="text">
+      <string><%= $talk->title %></string>
+    </param>
+    <param name="color">
+      <animated type="color">
+        <waypoint time="0s" before="clamped" after="clamped">
+          <color guid="7E4CF9471F305D5865464CC1B6F23625">
+            <r>1.000000</r>
+            <g>1.000000</g>
+            <b>1.000000</b>
+            <a>1.000000</a>
+          </color>
+        </waypoint>
+        <waypoint time="1s" before="clamped" after="clamped">
+          <color guid="55895BA26993605A5C6217DDE3DD8A7E">
+            <r>0.000000</r>
+            <g>0.000000</g>
+            <b>0.000000</b>
+            <a>1.000000</a>
+          </color>
+        </waypoint>
+        <waypoint time="5s" before="clamped" after="clamped">
+          <color guid="3203002B94AC85DBCB1F72DD05BC123F">
+            <r>0.000000</r>
+            <g>0.000000</g>
+            <b>0.000000</b>
+            <a>1.000000</a>
+          </color>
+        </waypoint>
+      </animated>
+    </param>
+    <param name="family">
+      <string>Sans Serif</string>
+    </param>
+    <param name="style">
+      <integer value="0" static="true"/>
+    </param>
+    <param name="weight">
+      <integer value="400" static="true"/>
+    </param>
+    <param name="direction">
+      <integer value="0" static="true"/>
+    </param>
+    <param name="compress">
+      <real value="1.0000000000"/>
+    </param>
+    <param name="vcompress">
+      <real value="1.0000000000"/>
+    </param>
+    <param name="size">
+      <vector>
+        <x>0.2500000000</x>
+        <y>0.2500000000</y>
+      </vector>
+    </param>
+    <param name="orient">
+      <vector>
+        <x>0.5000000000</x>
+        <y>0.5000000000</y>
+      </vector>
+    </param>
+    <param name="origin">
+      <vector>
+        <x>-2.1189317703</x>
+        <y>0.5998309255</y>
+      </vector>
+    </param>
+    <param name="use_kerning">
+      <bool value="true"/>
+    </param>
+    <param name="grid_fit">
+      <bool value="false"/>
+    </param>
+    <param name="invert">
+      <bool value="false"/>
+    </param>
+  </layer>
+  <layer type="group" active="true" exclude_from_rendering="false" version="0.3">
+    <param name="z_depth">
+      <real value="0.0000000000"/>
+    </param>
+    <param name="amount">
+      <real value="1.0000000000"/>
+    </param>
+    <param name="blend_method">
+      <integer value="0" static="true"/>
+    </param>
+    <param name="origin">
+      <vector>
+        <x>0.0000000000</x>
+        <y>0.0000000000</y>
+      </vector>
+    </param>
+    <param name="transformation">
+      <composite type="transformation">
+        <offset>
+          <vector>
+            <x>0.0000000000</x>
+            <y>0.0000000000</y>
+          </vector>
+        </offset>
+        <angle>
+          <angle value="0.000000"/>
+        </angle>
+        <skew_angle>
+          <angle value="0.000000"/>
+        </skew_angle>
+        <scale>
+          <vector>
+            <x>1.0000000000</x>
+            <y>1.0000000000</y>
+          </vector>
+        </scale>
+      </composite>
+    </param>
+    <param name="canvas">
+      <canvas>
+        <layer type="text" active="true" exclude_from_rendering="false" version="0.5" desc="room">
+          <param name="z_depth">
+            <real value="0.0000000000"/>
+          </param>
+          <param name="amount">
+            <real value="1.0000000000"/>
+          </param>
+          <param name="blend_method">
+            <integer value="0" static="true"/>
+          </param>
+          <param name="text">
+            <string><%= $talk->room %></string>
+          </param>
+          <param name="color">
+            <animated type="color">
+              <waypoint time="0s" before="clamped" after="clamped">
+                <color guid="DB925155795922378E3CAE46B6A0FB4C">
+                  <r>1.000000</r>
+                  <g>1.000000</g>
+                  <b>1.000000</b>
+                  <a>1.000000</a>
+                </color>
+              </waypoint>
+              <waypoint time="1s" before="clamped" after="clamped">
+                <color guid="97716F12C0CC3BBD1F536A122E405DC1">
+                  <r>0.000000</r>
+                  <g>0.000000</g>
+                  <b>0.000000</b>
+                  <a>1.000000</a>
+                </color>
+              </waypoint>
+              <waypoint time="5s" before="clamped" after="clamped">
+                <color guid="0AAE40BF7D3C0B453A4A5FFCF2032C8B">
+                  <r>0.000000</r>
+                  <g>0.000000</g>
+                  <b>0.000000</b>
+                  <a>1.000000</a>
+                </color>
+              </waypoint>
+            </animated>
+          </param>
+          <param name="family">
+            <string>Sans Serif</string>
+          </param>
+          <param name="style">
+            <integer value="0" static="true"/>
+          </param>
+          <param name="weight">
+            <integer value="400" static="true"/>
+          </param>
+          <param name="direction">
+            <integer value="0" static="true"/>
+          </param>
+          <param name="compress">
+            <real value="1.0000000000"/>
+          </param>
+          <param name="vcompress">
+            <real value="1.0000000000"/>
+          </param>
+          <param name="size">
+            <vector>
+              <x>0.2500000000</x>
+              <y>0.2500000000</y>
+            </vector>
+          </param>
+          <param name="orient">
+            <vector>
+              <x>0.5000000000</x>
+              <y>0.5000000000</y>
+            </vector>
+          </param>
+          <param name="origin">
+            <vector>
+              <x>-1.9844490290</x>
+              <y>-0.2340625972</y>
+            </vector>
+          </param>
+          <param name="use_kerning">
+            <bool value="true"/>
+          </param>
+          <param name="grid_fit">
+            <bool value="false"/>
+          </param>
+          <param name="invert">
+            <bool value="false"/>
+          </param>
+        </layer>
+        <layer type="rotate" active="true" exclude_from_rendering="false" version="0.1">
+          <param name="origin">
+            <vector>
+              <x>0.0000000000</x>
+              <y>0.0000000000</y>
+            </vector>
+          </param>
+          <param name="amount">
+            <animated type="angle">
+              <waypoint time="1s" before="clamped" after="clamped">
+                <angle guid="975E38A5F3CC3B98D0511EF7BAD5693B" value="0.000000"/>
+              </waypoint>
+              <waypoint time="5s" before="clamped" after="clamped">
+                <angle guid="347089187DD9D9FDB839BB107F93992F" value="360.000000"/>
+              </waypoint>
+            </animated>
+          </param>
+        </layer>
+      </canvas>
+    </param>
+    <param name="time_dilation">
+      <real value="1.0000000000"/>
+    </param>
+    <param name="time_offset">
+      <time value="0s"/>
+    </param>
+    <param name="children_lock">
+      <bool value="false" static="true"/>
+    </param>
+    <param name="outline_grow">
+      <real value="0.0000000000"/>
+    </param>
+    <param name="z_range">
+      <bool value="false" static="true"/>
+    </param>
+    <param name="z_range_position">
+      <real value="0.0000000000"/>
+    </param>
+    <param name="z_range_depth">
+      <real value="0.0000000000"/>
+    </param>
+    <param name="z_range_blur">
+      <real value="0.0000000000"/>
+    </param>
+  </layer>
+</canvas>

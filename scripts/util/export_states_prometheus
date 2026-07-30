@@ -1,0 +1,32 @@
+#!/usr/bin/perl -w
+
+use warnings;
+use strict;
+
+use DBI;
+use File::Temp qw/tempfile/;
+
+our $config;
+require "./config.pl";
+
+my $dbh = DBI->connect($config->{dbistring}, '', '') or die "Cannot connect to database!";
+
+my $tst = $dbh->prepare("SELECT count(*) AS count, state FROM talks GROUP BY state");
+my $rst = $dbh->prepare("SELECT rooms.altname AS name, talks.id FROM rooms LEFT JOIN talks ON (rooms.id = talks.room AND talks.starttime < now() AND talks.endtime > now()) WHERE altname IS NOT NULL");
+
+$tst->execute();
+$rst->execute();
+
+open PROM, ">/srv/node_exporter/textfiles/sreview.prom";
+while(my $row = $tst->fetchrow_hashref()) {
+	print PROM "sreview_talkstate{state=\"" . $row->{state} . "\"} " . $row->{count} . "\n";
+}
+while(my $row = $rst->fetchrow_hashref()) {
+	print PROM "sreview_roomstate{stream=\"vocto-" . $row->{name} . "\"} ";
+	if(defined($row->{id})) {
+		print PROM "1\n";
+	} else {
+		print PROM "0\n";
+	}
+}
+close PROM;

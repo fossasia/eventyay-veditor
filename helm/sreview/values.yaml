@@ -1,0 +1,35 @@
+# Set SReview configuration values here. For a full list of 
+# all the possible configuration values with their documentation, run
+# docker run --rm -ti registry.salsa.debian.org/debconf-video-team/sreview/encoder sreview-config -a dump
+# Note that everything needs to be JSON-encoded; that includes
+# strings, which means you have to double-quote them. See the
+# "adminuser" configuration value for an example.
+config:
+  adminuser: '"admin@example.com"'
+  accessmethods: '{"input": "S3", "intermediate": "S3", "output": "S3"}'
+  inputglob: '"input/*"'
+  pubdir: '"inter"'
+  outputdir: '"output"'
+secret:
+  # Set this to override the administrator password. If left unset, will
+  # generate one.
+  adminpw:
+  # Set this to configure an external database (see below)
+  dbistring:
+  # Set this if you want a working API key. If left unset, will generate
+  # one.
+  apikey: 
+  # Set this to configure an external S3 store (see below).
+  s3_access_config:
+# if you want to use a PostgreSQL database outside of Kubernetes, set
+# the following to false and make sreview.secret.dbistring point to
+# your external server. If you want to run PostgreSQL on your
+# Kubernetes cluster, keep it at true; in that case, secret.dbistring
+# will be ignored.
+use_internal_pg: true
+# if you want to use an object store outside of Kubernetes (highly
+# recommended), set the following to false and make
+# secret.s3_access_config point to your external object store. If you
+# want to run a minio on your Kubernetes cluster, keep it at true;
+# secret.s3_access_config will be ignored.
+use_internal_minio: true

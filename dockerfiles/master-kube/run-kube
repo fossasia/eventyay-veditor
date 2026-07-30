@@ -1,0 +1,75 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+
+use SReview::Config::Common;
+use SReview::Talk;
+use SReview::Template;
+use YAML::XS;
+use JSON;
+use DateTime;
+
+my $task = shift;
+my $id = shift;
+
+my $json = JSON->new->allow_nonref;
+
+my $config = SReview::Config::Common::setup;
+
+my $talk = SReview::Talk->new(talkid => $id);
+my $now = DateTime->now;
+my $start = DateTime->new(
+	year => $now->year,
+	month => $now->month,
+	day => 1,
+	hour => 0,
+	minute => 0,
+	second => 0,
+);
+my $secs = $now->epoch - $start->epoch;
+my $jobsuffix = $talk->talkid . "-" . unpack("h*", pack("L", $secs));
+
+my $image = "registry.salsa.debian.org/debconf-video-team/sreview/encoder";
+if(exists($ENV{SREVIEW_ENCODER_IMAGE})) {
+	$image = $ENV{SREVIEW_ENCODER_IMAGE};
+}
+
+my $vars = {
+	task => $task,
+	image => $image,
+	jobsuffix => $jobsuffix,
+	command => "sreview-$task",
+	args => [ $talk->talkid ],
+	env => [],
+	secretname => $ENV{SREVIEWSECRET_NAME},
+};
+
+if($task eq "announce" || $task eq "notify_final") {
+	$vars->{command} = "sreview-notify";
+	push @{$vars->{args}}, $task;
+}
+
+foreach my $cfg ($config->keys) {
+	next if $config->is_default($cfg);
+	my $val = $json->encode($config->get($cfg));
+	push @{$vars->{env}}, {name => "SREVIEW_" . uc($cfg), value => $val};
+}
+
+my $template = SReview::Template->new(talk => $talk, vars => $vars);
+my $data;
+
+{
+	local $/ = undef;
+	open my $input, "<:encoding(UTF-8)", "/opt/sreview/template.ep";
+	$data = <$input>;
+	close $input;
+}
+
+my $yamldata = Load($template->string($data));
+
+print "About to create this kubernetes object:\n";
+print Dump($yamldata) . "\n";
+open my $kubectl, "|-", "kubectl", "apply", "-f", "-";
+print $kubectl Dump($yamldata) . "\n";
+close $kubectl;

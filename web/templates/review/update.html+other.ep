@@ -1,0 +1,20 @@
+    <h1>
+      <small><%= $talk->eventname . " videos " =%></small>
+      <%= $talk->title =%>
+    </h1>
+    <div class="row" id="submission_notification">
+      <div class="col-sm-12">
+        <div class="jumbotron">
+          <h2 class="text-success">
+            <i class="fa fa-thumbs-up"></i>
+            Thank you for sending your review
+          </h2>
+          <p>You have told us the video is broken in an unusual way. This is what you wrote:</p>
+          <blockquote>
+            <i>"<%= $other_msg %>"</i>
+          </blockquote>
+          <p><strong>Someone from the video team will</strong> look into the problem and <strong>send you an email</strong>.</p>
+          <p>Hopefully we can fix it.</p>
+        </div>
+      </div>
+    </div> 

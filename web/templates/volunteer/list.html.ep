@@ -1,0 +1,9 @@
+%layout 'admin';
+%title 'SReview volunteer overview';
+<h1>SReview volunteer overview</h1>
+<table class="table table-hover">
+  <tr><th>Talk</th><th>State</th></tr>
+  % foreach my $talk(@$talks) {
+  <tr><td><a href='/r/<%= $talk->[0] %>'><%= $talk->[1] %></a></td><td><%= $talk->[3] %></td></tr>
+  % }
+</table>

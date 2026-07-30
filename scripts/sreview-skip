@@ -1,0 +1,38 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+
+use DBI;
+use SReview::Config::Common;
+
+=head1 NAME
+
+sreview-skip - skip a state in the SReview video review system
+
+=head1 SYNOPSIS
+
+sreview-skip B<id>
+
+=head1 DESCRIPTION
+
+sreview-skip is used for skipping a state in the SReview video review
+system. It simply marks the given talk as "done" in the current state,
+and quits, relying on sreview-dispatch to move it to the next used
+state.
+
+While this may seem quite useless, it can be useful if a number of talks
+need to be retranscoded, but their cuts have already been removed and
+you don't want to have to manually okay every one of them.
+
+It can also be useful when no notification is to be used.
+
+=cut
+
+my $config = SReview::Config::Common::setup;
+
+my $dbh = DBI->connect($config->get('dbistring'), '', '') or die "Cannot connect to database!";
+
+my $talkid = $ARGV[0];
+
+$dbh->prepare("UPDATE talks SET progress='done' WHERE id=?")->execute($talkid);

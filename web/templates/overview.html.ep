@@ -1,0 +1,267 @@
+%layout "default", scripts_extra => [ "/vue/vue.min.js" ], fluid => 1;
+<div id="overview">
+  <div class="float-right dropdown" v-if="admin_key">
+    <button type="button" class="btn btn-danger dropdown-toggle"
+            id=admin-dropdown-button" data-toggle="dropdown"
+            aria-haspopup="true" aria-expanded="false">
+      Admin
+    </button>
+    <div class="dropdown-menu dropdown-menu-right"
+         aria-labelledby="admin-dropdown-button">
+      <a class="dropdown-item" v-on:click="new_talk_modal = true">
+        <i class="fa fa-plus" aria-hidden="true"></i>
+        Add Talk
+      </a>
+      <a class="dropdown-item" href="/admin">
+        <i class="fa fa-wrench" aria-hidden="true"></i>
+        Admin Area
+      </a>
+      <a class="dropdown-item" href="/admin/logout">
+        <i class="fa fa-sign-out" aria-hidden="true"></i>
+        Log Out
+      </a>
+    </div>
+  </div>
+  <h1>Video status overview</h1>
+  <p v-if="events.length > 0">Event:
+    <select v-model="event">
+      <option v-for="e in events" v-bind:value="e.id">{{e.name}}</option>
+    </select>
+    <button class="btn btn-light btn-sm" v-on:click="reloadEvent">
+      <i class="fa fa-regular fa-rotate-right"></i>
+    </button>
+  </p>
+  <nav class="navbar navbar-expand-lg navbar-light bg-light">
+    <form class="form-inline my-2 my-lg-0">
+      <input v-model="search" type="text" class="form-control"
+             placeholder="Find talks and speakers" id="find_talks_speakers">
+    </form>
+    <span class="navbar-text ml-sm-3">Filter by:</span>
+    <navbar-filter name="Date" v-bind:options="days"
+                   v-on:update:selected="selected_dates = $event">
+    </navbar-filter>
+    <navbar-filter name="Room" v-bind:options="rooms"
+                   v-on:update:selected="selected_rooms = $event">
+    </navbar-filter>
+    <navbar-filter name="Track" v-bind:options="tracks"
+                   v-on:update:selected="selected_tracks = $event" v-if="tracks">
+    </navbar-filter>
+    <navbar-filter name="State" v-bind:options="states"
+                   v-on:update:selected="selected_states = $event">
+    </navbar-filter>
+    <navbar-filter name="Progress" v-bind:options="progresses"
+                   v-on:update:selected="selected_progresses = $event">
+    </navbar-filter>
+  </nav>
+  <table class='table table-hover'>
+    <tr>
+      <th v-if="admin_key">ID</th>
+      <th>Talk</th>
+      <th>Speakers</th>
+      <th>Room</th>
+      <th>Date</th>
+      <th>Start time</th>
+      <th>End time</th>
+      <th>State</th>
+      <th>Progress</th>
+      <th v-if="admin_key"></th>
+    </tr>
+    <tr v-for="row in rows">
+      <td v-if="admin_key">{{row.id}}</td>
+      <td><a v-bind:href="row.reviewurl">{{row.name}}</a></td>
+      <td>{{row.speakers}}</td>
+      <td>{{row.room}}</td>
+      <td>{{row.dates}}</td>
+      <td>{{row.starttime_time}}</td>
+      <td>{{row.endtime_time}}</td>
+      <td v-bind:title="state_descriptions[row.state]">{{row.state}}</td>
+      <td>{{row.progress}}</td>
+      <td v-if="admin_key">
+        <a class="btn btn-sm btn-danger"
+           v-on:click="edit_talk_modal_nonce = row.nonce">
+          <i class="fa fa-pencil" aria-hidden="true"></i>
+          Edit
+        </a>
+      </td>
+    </tr>
+  </table>
+  <talk-edit-modal v-bind:nonce="edit_talk_modal_nonce"
+                   v-bind:new_talk="new_talk_modal"
+                   v-on:dismissed="dismiss_talk_edit_modal"
+                   v-on:saved="talk_edit_complete">
+  </talk-edit-modal>
+</div>
+<script type="text/html" id="navbar-filter-template">
+  <ul class="navbar-nav">
+    <li class="nav-item dropdown">
+      <div class="nav-link dropdown-toggle" v-bind:id="id" role="button"
+           data-toggle="dropdown" aria-haspopup="true" aria-expanded="false"
+           v-bind:class="selected_all ? '' : 'text-success'">
+        {{ name }}
+      </div>
+      <div class="dropdown-menu" v-bind:aria-labelledby="id">
+        <form class="px-4 py-3" style="min-width: 15rem">
+          <div>
+            Select {{ name }}:
+            <button class="btn btn-sm btn-light"
+                    v-if="selected_all"
+                    v-on:click.prevent="select_none">
+              <i class="fa fa-check-square-o" aria-hidden="true"></i>
+            </button>
+            <button class="btn btn-sm btn-light"
+                    v-else-if="selected_none"
+                    v-on:click.prevent="select_all">
+              <i class="fa fa-square-o" aria-hidden="true"></i>
+            </button>
+            <button class="btn btn-sm btn-light"
+                    v-else
+                    v-on:click.prevent="select_none">
+              <i class="fa fa-minus-square-o" aria-hidden="true"></i>
+            </button>
+          </div>
+          <div style="max-height: 15em; overflow-y: auto">
+            <div class="form-check" v-for="checkbox in checkboxes">
+              <input type="checkbox" class="form-check-input"
+                     v-bind:id="checkbox.id" v-model:value="checkbox.checked">
+              <label class="form-check-label" v-bind:for="checkbox.id">
+                {{ checkbox.name }}
+              </label>
+            </div>
+          </div>
+        </form>
+      </div>
+    </li>
+  </ul>
+</script>
+<script type="text/html" id="talk-edit-modal-template">
+  <div class="modal" tabindex="-1" role="dialog"
+        aria-labelledby="talk-edit-modal-label"
+        aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable" role="document">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="talk-edit-modal-label">
+            <span v-if="new_talk">New Talk</span>
+            <span v-else>Edit Talk</span>
+          </h5>
+          <button type="button" class="close" aria-label="Close"
+                  v-on:click="dismiss_modal">
+            <span aria-hidden="true">&times;</span>
+          </button>
+        </div>
+        <div class="modal-body">
+          <form>
+            <div class="form-group">
+              <label for="title-field">Talk title</label>
+              <input class="form-control" id="title-field"
+                     v-model="title"
+                     v-bind:class="title ? '' : 'is-invalid'">
+            </div>
+            <div class="form-group">
+              <label for="subtitle-field">Subtitle</label>
+              <input class="form-control" id="subtitle-field"
+                     v-model="subtitle">
+            </div>
+            <div class="form-group">
+              <label>Speakers</label>
+              <div class="form-control" style="height: auto">
+                <button class="btn badge-light" v-for="speaker in speakers"
+                        v-on:click.prevent="remove_speaker(speaker.id)">
+                  {{ speaker.name }}
+                  <i class="fa fa-times" aria-hidden="true"></i>
+                </button>
+                <div class="dropdown">
+                  <input class="form-control-sm" placeholder="Add Speakers"
+                         v-model="speaker_search"
+                         v-on:blur="speaker_search = ''">
+                  <div class="dropdown-menu"
+                       v-bind:class="speaker_search_results.length > 0 ? 'show': ''">
+                    <a class="dropdown-item"
+                       v-for="speaker in speaker_search_results"
+                       v-on:mousedown.preventdefault="add_speaker(speaker)">
+                      {{ speaker.name }}
+                    </>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="description-field">Talk description</label>
+              <textarea class="form-control" id="description-field"
+                        v-model="description" rows="5"></textarea>
+            </div>
+            <div class="form-group">
+              <label for="apologynote-field">Apology note</label>
+              <input class="form-control" id="apologynote-field"
+                     v-model="apologynote">
+            </div>
+            <div class="form-group">
+              <label for="starttime-field">Start time</label>
+              <input class="form-control" id="starttime-field"
+                     v-model="starttime"
+                     v-bind:class="valid_starttime ? 'is-valid' : 'is-invalid'">
+            </div>
+            <div class="form-group">
+              <label for="endtime-field">End time</label>
+              <input class="form-control" id="endtime-field"
+                     v-model="endtime"
+                     v-bind:class="valid_endtime ? 'is-valid' : 'is-invalid'">
+            </div>
+            <div class="form-group">
+              <label for="track-field">Track</label>
+              <select class="form-control" id="track-field" v-model="track">
+                <option value="">No Track</option>
+                <option v-bind:value="t.id" v-for="t in tracks">
+                  {{ t.name }}
+                </option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="room-field">Room</label>
+              <select class="form-control" id="room-field"
+                      v-model="room"
+                      v-bind:class="room ? '' : 'is-invalid'">
+                <option v-bind:value="r.id" v-for="r in rooms">
+                  {{ r.name }}
+                </option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="state-field">State</label>
+              <select class="form-control" id="state-field"
+                      v-model="state">
+                <option v-for="s in states">
+                  {{ s }}
+                </option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="progress-field">Progress</label>
+              <select class="form-control" id="progress-field"
+                      v-model="progress">
+                <option v-for="p in progresses">
+                  {{ p }}
+                </option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="stream-field">Active stream</label>
+              <input class="form-control" id="stream-field"
+                    v-model="active_stream">
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-primary"
+                  v-on:click="save"
+                  v-bind:disabled="!valid">
+            Save changes
+          </button>
+          <button type="button" class="btn btn-secondary"
+                  v-on:click="dismiss_modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</script>
+<script src="/overview.js"></script>

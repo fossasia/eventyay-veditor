@@ -1,0 +1,18 @@
+    <h1>
+      <small><%= $talk->eventname . " videos " =%></small>
+      <%= $talk->title =%>
+    </h1>
+    <div class="row" id="submission_notification">
+      <div class="col-sm-12">
+        <div class="jumbotron">
+          <h2 class="text-danger">
+            <i class="fa fa-ban"></i>
+            There was an error processing your request
+          </h2>
+          <p>The following error occurred while trying to process your request:</p>
+          <blockquote><%= $error =%></blockquote>
+          <p>If you do not know what to do with the above error, please
+          <strong>contact the video team</strong>.</p>
+        </div>
+      </div>
+    </div> 

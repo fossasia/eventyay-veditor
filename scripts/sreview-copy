@@ -1,0 +1,58 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+
+use SReview::Config::Common;
+use SReview::Files::Factory;
+use Getopt::Long;
+use File::Copy;
+
+my $config = SReview::Config::Common::setup;
+
+sub get_collection($) {
+	my $collname = shift;
+	my $relname;
+	if($collname eq "input") {
+		return SReview::Files::Factory->create($collname, $config->get('inputglob'));
+	}
+	if($collname eq "pub") {
+		return SReview::Files::Factory->create("intermediate", $config->get('pubdir'));
+	}
+	if($collname eq "output") {
+		return SReview::Files::Factory->create("output", $config->get('outputdir'));
+	}
+	return SReview::Files::Factory->create($collname, $config->get('extra_collections')->{$collname});
+}
+
+my $inputcoll;
+my $outputcoll;
+my $filename;
+my $targetname;
+my $move;
+
+GetOptions(
+	"inputcollection|i=s" => \$inputcoll,
+	"outputcollection|o=s" => \$outputcoll,
+	"filename|f=s" => \$filename,
+	"targetname|t=s" => \$targetname,
+	"move|m" => \$move,
+);
+
+if(!defined($targetname)) {
+	$targetname = $filename;
+}
+
+die "input collection required" unless defined($inputcoll);
+die "output collection required" unless defined($outputcoll);
+die "filename required" unless defined($filename);
+
+$inputcoll = get_collection($inputcoll);
+$outputcoll = get_collection($outputcoll);
+my $inputfile = $inputcoll->get_file(relname => $filename);
+my $outputfile = $outputcoll->add_file(relname => $targetname);
+copy($inputfile->filename, $outputfile->filename);
+$outputfile->store_file;
+if($move) {
+	$inputfile->delete;
+}

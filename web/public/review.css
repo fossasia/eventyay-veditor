@@ -1,0 +1,125 @@
+body {
+  font-size: 16px;
+}
+
+.eventname {
+  display: block;
+  margin-bottom: 0.625rem;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+.container {
+  margin-bottom: 2.5rem;
+}
+
+h1 > small {
+  display: block;
+  margin-bottom:0.625rem;
+}
+
+#main_video, #video_starts_too_late, #av_delay, #talk_info, .help-text, #video_ends_too_early, #instructions, #video_state_information {
+  margin-top: 1.25rem;
+}
+
+#talk_info .dl-horizontal {
+  margin-bottom: 0.3125rem;
+}
+
+.dl-horizontal dt {
+  width: auto;
+  padding-right: 0.3125rem;
+}
+
+.dl-horizontal dd {
+  margin-left: 0;
+}
+
+#video_starts_too_early, #video_ends_too_late {
+  margin-top: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.btn-block + .alert {
+  margin-top: 0.9375rem;
+}
+
+.hidden {
+  display: none;
+}
+
+.alert_with_control {
+  padding:0.3125rem 0.9375rem;
+}
+
+#video_state_information .alert + .alert-info {
+  padding: 1.25rem;
+}
+
+.audio_player {
+  width: 90%;
+  padding: 0.625rem 0 1.25rem 0;
+}
+
+.jumbotron {
+  padding-top: 1.875rem;
+  padding-bottom: 1.875rem;
+}
+
+.jumbotron h2 {
+  font-size: 2.1875rem;
+  margin-bottom: 2.5rem;
+}
+
+.jumbotron p {
+  font-size: 1.3125rem;
+}
+
+.jumbotron ul {
+  margin-bottom: 1.25rem;
+}
+
+.jumbotron ul > li {
+  font-size: 1.3125rem;
+}
+
+.restore_original .btn {
+  margin-top: 1.25rem;
+}
+
+.restore_original, .error_div, .video_has_problems, .other_brokenness, .info_row {
+  margin-top: 1.25rem;
+}
+
+.video_has_problems legend {
+  margin-bottom: 0.625rem;
+}
+
+#av_delay .form-inline {
+  width: 40%;
+}
+
+#main_action {
+  margin: 1.875rem 0;
+}
+
+#no_audio h5 {
+  margin-top: 0.9375rem;
+}
+
+.fa-question-circle {
+  color: #999999;
+  margin-left: 0.1875rem;
+}
+
+a .fa-question-circle:hover {
+  color: #000000;
+}
+
+.radio label.sreview-disabled-option {
+  color: #999999;
+}

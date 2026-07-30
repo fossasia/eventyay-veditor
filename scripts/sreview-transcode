@@ -1,0 +1,386 @@
+#!/usr/bin/perl -w
+
+# SReview, a web-based video review and transcoding system
+# Copyright (c) 2016-2017, Wouter Verhelst <w@uter.be>
+#
+# SReview is free software: you can redistribute it and/or modify it
+# under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public
+# License along with this program.  If not, see
+# <http://www.gnu.org/licenses/>.
+
+use strict;
+use warnings;
+
+use utf8;
+use DBI;
+use File::Path qw/make_path/;
+use File::Temp qw/tempdir/;
+use SReview::Config::Common;
+use SReview::Talk;
+use SReview::Template::SVG;
+use SReview::Template::Synfig;
+use Media::Convert::Asset;
+use Media::Convert::Asset::PNGGen;
+use Media::Convert::Asset::Concat;
+use Media::Convert::Asset::ProfileFactory;
+use Media::Convert::Pipe;
+use SReview::Files::Factory;
+use Mojo::Util qw/xml_escape/;
+use Mojo::UserAgent;
+use SReview::Credits qw/process_template/;
+
+=head1 NAME
+
+sreview-transcode - transcode the output of L<sreview-cut> into production-quality media files
+
+=head1 SYNOPSIS
+
+sreview-transcode TALKID
+
+=head1 DESCRIPTION
+
+C<sreview-transcode> performs the following actions:
+
+=over
+
+=item *
+
+Look up the talk with id TALKID in the database.
+
+=item *
+
+Create the preroll slide from the preroll template, after applying template
+changes to it
+
+=item *
+
+If a postroll template is defined, create the postroll slide using the same
+process as for the preroll slide. If no postroll template is defined, use the
+statically configured preroll
+
+=item *
+
+If an apology template is defined and the current talk has an apology
+note that is not zero length and not NULL, create the apology slide for
+this talk
+
+=item *
+
+Convert the preroll slide, postroll slide, and (if any) apology slide to
+a 5-second video with the same properties as the main raw video
+
+=item *
+
+For each of the configured profiles, do a two-pass transcode of the
+concatenated version of preroll, apology (if available), main, and
+postroll videos to a production video
+
+=back
+
+=head1 CONFIGURATION
+
+C<sreview-transcode> considers the following configuration values:
+
+=over
+
+=cut
+
+my $config = SReview::Config::Common::setup;
+
+=item dbistring
+
+The DBI string used to connect to the database
+
+=cut
+
+my $dbh = DBI->connect($config->get('dbistring'), '', '') or die "Cannot connect to database!";
+my $talkid = $ARGV[0];
+
+$dbh->prepare("UPDATE talks SET progress='running' WHERE id = ?")->execute($talkid);
+
+my $talk = SReview::Talk->new(talkid => $talkid);
+
+my $slug = $talk->slug;
+
+my $data = $dbh->prepare("SELECT eventid, event, event_output, room, room_output, starttime, starttime::date AS date, to_char(starttime, 'yyyy') AS year, speakers, name AS title, subtitle, description, apologynote FROM talk_list WHERE id = ?");
+$data->execute($talkid);
+my $drow = $data->fetchrow_hashref();
+
+=item pubdir
+
+The directory in which to find the output of C<sreview-cut>
+
+=cut
+
+my $input_coll = SReview::Files::Factory->create("intermediate", $config->get("pubdir"));
+
+=item outputdir
+
+The top-level directory in which to store production output data
+
+=cut
+
+my $output_coll = SReview::Files::Factory->create("output", $config->get("outputdir"));
+
+=item output_subdirs
+
+Array of fields on which to base subdirectories to be created under
+C<outputdir>. The fields can be one or more of:
+
+=over
+
+=item eventid
+
+The ID number of the event that this talk was recorded at
+
+=item event
+
+The name of the event that this talk was recorded at
+
+=item event_output
+
+The "outputdir" value in row of the events field of the event that this
+talk was recorded at.
+
+=item room
+
+The name of the room in which this talk was recorded
+
+=item date
+
+The date on which this talk occurred
+
+=item year
+
+The year in which this talk occurred
+
+=back
+
+=cut
+
+my @elems = ();
+foreach my $subdir(@{$config->get('output_subdirs')}) {
+	push @elems, $drow->{$subdir};
+}
+my $relprefix = join('/', @elems);
+
+=item workdir
+
+The location where any temporary files are stored. Defaults to C</tmp>,
+but can be overridden if necessary. These temporary files are removed
+when C<sreview-transcode> finishes.
+
+=cut
+
+my $tmpdir = tempdir( "transXXXXXX", DIR => $config->get('workdir'), CLEANUP => 1);
+
+=item preroll_template
+
+The name of an SVG or Synfig template to be used for the preroll (i.e., opening
+credits). Required.
+
+=cut
+
+my $preroll = "$tmpdir/pre/pre.png";
+mkdir "$tmpdir/pre";
+my ($preopts_in, $preopts_out);
+($preroll, $preopts_in, $preopts_out) = process_template($config->get('preroll_template'), $preroll, $talk, $config);
+
+=item postroll_template
+
+The name of an SVG or Synfig template to be used for the postroll (i.e.,
+closing credits). Either this option or C<postroll> is required.
+
+=item postroll
+
+The name of a PNG file to be used for the postroll (i.e., closing
+credits). Either this option or C<postroll_template> is required.
+
+=item template_format
+
+Whether the preroll, postroll, and apology templates are in SVG or
+Synfig format. Currently, either all templates are SVG, or all templates
+are synfig; the two cannot be combined.
+
+Valid values are "svg" (for SVG) or "synfig" (for synfig). Defaults to
+"svg".
+
+=cut
+
+my ($postopts_in, $postopts_out, $postroll);
+
+if(defined($config->get('postroll_template'))) {
+	mkdir "$tmpdir/post";
+	($postroll, $postopts_in, $postopts_out) = process_template($config->get("postroll_template"), "$tmpdir/post/postroll.png", $talk, $config);
+} elsif(defined($config->get('postroll'))) {
+	print "using postroll from config\n";
+	$postroll = $config->get('postroll');
+	$postopts_in = [];
+	$postopts_out = [duration => 5];
+} else {
+	die "need postroll or postroll template!";
+}
+
+my $main_input_file = $input_coll->get_file(relname => $talk->relative_name . "/main.mkv");
+my $main_input = Media::Convert::Asset->new(url => $main_input_file->filename);
+
+=item apology_template
+
+The name of an SVG template to be used for the apology slide (shown
+right after the opening credits if an apology was entered). Only
+required if at least one talk has an apology entered.
+
+=item input_profile
+
+A profile that generates videos which can be concatenated with input
+videos without re-transcoding anything. If not specified, uses the input
+video as a "profile".
+
+=cut
+
+my $png_profile;
+if(defined($config->get("input_profile"))) {
+	$png_profile = Media::Convert::Asset::ProfileFactory->create($config->get("input_profile"), $main_input, $config->get('extra_profiles'));
+} else {
+	$png_profile = $main_input;
+}
+
+my ($sorry, $sorryopts_in, $sorryopts_out);
+if(defined($drow->{apologynote}) && length($drow->{apologynote}) > 0) {
+	my $apology = "$tmpdir/sorry/sorry.png";
+	mkdir "$tmpdir/sorry";
+
+	die unless defined($config->get('apology_template'));
+	($apology, $sorryopts_in, $sorryopts_out) = process_template($config->get('apology_template'), $apology, $talk, $config);
+	$sorry = Media::Convert::Asset->new(url => "$tmpdir/$slug-sorry.mkv", reference => $png_profile, @$sorryopts_out);
+	Media::Convert::Pipe->new(inputs => [Media::Convert::Asset::PNGGen->new(url => $apology, @$sorryopts_in)], output => $sorry)->run();
+}
+
+# concatenate preroll, main video, postroll
+my $pre_in = Media::Convert::Asset::PNGGen->new(url => $preroll, reference => $png_profile, @$preopts_in);
+my $pre_out = Media::Convert::Asset->new(url => "$tmpdir/$slug-preroll.mkv", reference => $png_profile, @$preopts_out);
+Media::Convert::Pipe->new(inputs => [$pre_in], output => $pre_out, vcopy => 0, acopy => 0)->run();
+my $post = Media::Convert::Asset->new(url => "$tmpdir/$slug-postroll.mkv", reference => $png_profile, @$postopts_out);
+Media::Convert::Pipe->new(inputs => [Media::Convert::Asset::PNGGen->new(url => $postroll, @$postopts_in)], output => $post, vcopy => 0, acopy => 0)->run();
+my $inputs = [ $pre_out ];
+if( -f "$tmpdir/$slug-sorry.mkv") {
+	push @$inputs, $sorry;
+}
+push @$inputs, ( $main_input, $post );
+
+my $input = Media::Convert::Asset::Concat->new(components => $inputs, url => "$tmpdir/concat.txt");
+
+=item output_profiles
+
+An array of profile names to be produced (see above for the details).
+Defaults to C<webm>.
+
+=back
+
+=item embedded metadata
+
+The video files get metadata set based on the track data in the
+database.  A useful set of metadata tags can be found in
+http://wiki.webmproject.org/webm-metadata/global-metadata,
+https://www.matroska.org/technical/tagging.html and
+/usr/share/doc/libimage-exiftool-perl/html/TagNames/Matroska.html.
+
+The exact metadata is set using the C<metadata_templates> configuration
+value. See L<SReview::Config::Common> for details.
+
+=back
+
+=cut
+
+my $multi_profiles = $config->get("video_multi_profiles");
+my $meta = $talk->get_metadata;
+
+foreach my $profile_str(@{$config->get('output_profiles')}) {
+	my $profile = Media::Convert::Asset::ProfileFactory->create($profile_str, $input, $config->get('extra_profiles'));
+	my $output_file = $output_coll->add_file(relname => join('/', $relprefix, $slug . "." . $profile->exten));
+	my $output = Media::Convert::Asset->new( url => $output_file->filename, reference => $profile);
+
+        $output->add_metadata(%$meta);
+
+	my $multipass = exists($multi_profiles->{$profile_str}) ? $multi_profiles->{$profile_str} : 1;
+	Media::Convert::Pipe->new(inputs => [$input], output => $output, vcopy => 0, acopy => 0, multipass => $multipass)->run();
+	# XXX: this should really be done by Media::Convert::Asset::Concat, not by us
+	unlink($input->url);
+	$output_file->store_file;
+}
+
+$dbh = DBI->connect($config->get('dbistring'), '', '') or die "Could not reconnect to database for state update!";
+
+$dbh->prepare("UPDATE talks SET progress = 'done' WHERE id = ?")->execute($talkid);
+
+=head1 SVG TRANSFORMATIONS
+
+The transformation performed over the SVG files is a simple C<sed>-like
+replacement of input tags in the template file. All data is XML-escaped
+first, however.
+
+The following tags can be set inside the SVG file:
+
+=over
+
+=item @SPEAKERS@
+
+The names of the speakers, in this format:
+
+=over
+
+Firstname Lastname, Firstname Lastname and Firstname Lastname
+
+=back
+
+=item @ROOM@
+
+The name of the room where the talk was held.
+
+=item @TITLE@
+
+The title of the talk.
+
+=item @SUBTITLE@
+
+The subtitle of the talk.
+
+=item @DATE@
+
+The date on which the talk was held.
+
+=item @APOLOGY@
+
+The apology note defined for this talk.
+
+=back
+
+If one of these fields has no data for the given talk, then the tag will
+be replaced by the empty string instead.
+
+In addition, as of version 0.7, the template is processed by
+L<Mojo::Template> with the L<SReview::Talk> object for the current talk
+assigned to the C<$talk> variable, which allows for far more
+flexibility. See the documentation of L<Mojo::Template> for more details
+on that templating engine, and the documentation of L<SReview::Talk> for
+the available values from that object.
+
+(As an aside, the SVG transformations are actually implemented through
+L<SReview::Template::SVG>. See the documentation for that module for
+details)
+
+=head1 SEE ALSO
+
+L<sreview-cut>, L<sreview-previews>, L<sreview-skip>, L<sreview-config>,
+L<Media::Convert::Asset::ProfileFactory>, L<SReview::Talk>, L<Mojo::Template>.
+
+=cut

@@ -1,0 +1,165 @@
+#!/usr/bin/perl -w
+
+use v5.28;
+use strict;
+use warnings;
+
+use DBI;
+use Mojo::Template;
+use Mojo::URL;
+use Mojo::UserAgent;
+use File::Temp qw/tempfile/;
+use SReview::Config::Common;
+use SReview::Talk;
+use Email::Stuffer;
+use Email::Address;
+use Email::Sender::Simple qw/sendmail/;
+
+my $config = SReview::Config::Common::setup;
+
+my $dbh = DBI->connect($config->get('dbistring'), '', '') or die "Cannot connect to database!";
+
+my $talkid = shift;
+
+die "need talk ID!" unless defined($talkid);
+
+my $configprefix = shift;
+$configprefix = 'notify' unless defined($configprefix);
+
+say "Sending out notification for talk with ID $talkid";
+
+$dbh->prepare("UPDATE talks SET progress='running' WHERE id=?")->execute($talkid);
+
+my $mt = Mojo::Template->new;
+$mt->vars(1);
+my $title;
+my $url;
+my $overview;
+my $talk;
+
+sub notify_email() {
+	my $to_query = $dbh->prepare("SELECT speakers.name, speakers.email FROM speakers JOIN speakers_talks ON speakers_talks.speaker = speakers.id WHERE speakers_talks.talk = ? AND speakers.email IS NOT NULL");
+	my $cc_query = $dbh->prepare("SELECT tracks.name, tracks.email FROM tracks JOIN talks ON (talks.track = tracks.id) WHERE talks.id = ?");
+
+	$to_query->execute($talkid);
+	my $to = $to_query->fetchall_arrayref();
+	my @to_recips;
+
+	foreach my $to_recip(@$to) {
+		if(defined($to_recip->[1])) {
+			my $rcp = $to_recip->[0];
+			$rcp =~ s/,//g;
+			push @to_recips, $rcp . " <" . $to_recip->[1] . ">";
+		}
+	}
+
+	$cc_query->execute($talkid);
+	my $cc = $cc_query->fetchall_arrayref();
+	my @cc_recips;
+
+	foreach my $cc_recip(@$cc) {
+		if(defined($cc_recip->[1])) {
+			my $rcp = $cc_recip->[0];
+			$rcp =~ s/,//g;
+			push @cc_recips, "responsible for track " . $rcp . " <" . $cc_recip->[1] . ">";
+		}
+	}
+
+	if(scalar(@to_recips) == 0 && scalar(@cc_recips) == 0) {
+		print "no addressees, can't send email for talk with id $talkid";
+		return;
+	} elsif(scalar(@to_recips) == 0 && scalar(@cc_recips) > 0) {
+                @to_recips = @cc_recips;
+                @cc_recips = ();
+        }
+
+	my $file = $config->get("${configprefix}_email_template");
+	$file = $config->get("email_template") unless defined($file);
+	my $template_url = Mojo::URL->new($file);
+	my $template;
+	if(defined($template_url->scheme)) {
+		my $res = Mojo::UserAgent->new->get($template_url)->result;
+		die "could not download $template_url" unless $res->is_success;
+		(undef, $file) = tempfile();
+		$res->save_to($file);
+	}
+	my $body = $mt->render_file($file, {title => $title, url => $url, overview => $overview, talk => $talk});
+	my $subject = $config->get("${configprefix}_email_subject");
+	$subject = $config->get("email_subject") unless defined($subject);
+	my @references;
+	my $nonce = $talk->nonce;
+	my $refid = $talk->corrections->{serial};
+	my $action = 'ntf';
+	if($configprefix eq 'announce') {
+		$refid--;
+		$action = 'ann';
+	} elsif ($configprefix eq 'notify_final') {
+		$refid--;
+		$action = 'fnt';
+	}
+	my @addrs = Email::Address->parse($config->get('email_from'));
+	my $host = $addrs[0]->host;
+	for (; $refid >= 0; $refid--) {
+		push @references, "<sreview-$nonce-$refid-ntf\@$host>";
+	}
+	$refid = $talk->corrections->{serial};
+	my $email = Email::Stuffer->from($config->get('email_from'))
+		->to(@to_recips)
+		->subject($mt->render($subject, {title => $title}))
+		->cc(@cc_recips)
+		->header(References => join(",\n  ", @references))
+		->header("Message-ID" => "<sreview-$nonce-$refid-$action\@$host>")
+		->text_body($body);
+	say "Sending out " . $email->as_string;
+	sendmail($email->as_string);
+}
+
+sub notify_command() {
+	my $data = $dbh->prepare("SELECT title, nonce FROM talks WHERE id = ?");
+	$data->execute($talkid);
+	my $row = $data->fetchrow_hashref;
+
+	foreach my $command(@{$config->get("${configprefix}_commands")}) {
+		my @run;
+		foreach my $component(@$command) {
+			my $rendered = $mt->render($component, {title => $title, url => $url, overview => $overview, talk => $talk});
+			chomp($rendered);
+			push @run, $rendered;
+		}
+		say "Running '" . join("', '", @run) . "'";
+		system(@run);
+	}
+}
+
+my $actions = $config->get("${configprefix}_actions");
+
+$talk = SReview::Talk->new(talkid => $talkid);
+$title = $talk->title;
+my $save = $/;
+my $urlbase = $config->get('urlbase');
+$/ = '/';
+chomp($urlbase);
+$/ = $save;
+if($configprefix eq 'notify_final') {
+	$url = join('/', ($urlbase, "f", $talk->nonce));
+} else {
+	$url = join('/', ($urlbase, "r", $talk->nonce));
+}
+$overview = join('/', ($urlbase, "overview"));
+
+say "Performing " . scalar(@$actions) . " actions for notification:";
+foreach my $action(@$actions) {
+	if($action eq "email") {
+		say "sending email";
+		notify_email();
+	} elsif($action eq "command") {
+		say "running command";
+		notify_command();
+	} else {
+		die "Unknown notification action $action!";
+	}
+}
+
+$dbh->prepare("UPDATE talks SET progress='done' WHERE id = ?")->execute($talkid) or die $!;
+
+say "finished";

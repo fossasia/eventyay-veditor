@@ -1,0 +1,11 @@
+[Unit]
+Description=SReview web service
+[Service]
+ExecStart=/usr/bin/hypnotoad -f /usr/bin/sreview-web
+ExecStop=/usr/bin/hypnotoad -s /usr/bin/sreview-web
+RuntimeDirectory=sreview
+User=sreview
+Group=sreview
+PIDFile=/var/run/sreview/sreview-web.pid
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+%layout 'default';
+%title 'Log in';
+ %= form_for login_post => (method => 'POST') => begin
+    %= label_for email => 'Email address'
+    %= email_field 'email'
+    %= label_for pass => 'Password'
+    %= password_field 'pass'
+    %= submit_button
+ %= end

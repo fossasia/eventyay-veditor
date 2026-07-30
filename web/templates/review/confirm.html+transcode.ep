@@ -1,0 +1,25 @@
+    <h1>
+      <small class="eventname"><%= $talk->eventname . " videos" =%></small>
+      <%= $talk->title =%>
+    </h1>
+    <div class="row info_row">
+      <div id="talk_info" class="col-sm-12">
+        <dl class="dl-horizontal">
+          <dt>Speakers:</dt>
+          <dd><%= $talk->speakers =%></dd>
+          <dt>Date:<dt>
+          <dd><%= $talk->readable_date =%></dd>
+          <dt>Room:</dt>
+          <dd><%= $talk->room =%></dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="row" id="video_state_information">
+      <div class="col-sm-6">
+        <div class="alert alert-info" role="alert">
+          <p>We are currently getting the video of this talk ready to be published.</p>
+          <p><strong>We will send you an email</strong> when the video is released to the world.</p>
+        <div>
+      </div>
+    </div>

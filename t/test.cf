@@ -1,0 +1,8 @@
+# subroutine test
+$mangle = sub { };
+
+# The DBI connection string used to connect to the database
+#$dbistring = 'dbi:Pg:dbname=sreview';
+
+# Do not remove this, perl needs it
+1;

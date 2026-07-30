@@ -1,0 +1,12 @@
+#!/bin/sh
+
+set -e
+
+. /usr/share/debconf/confmodule
+
+if [ -f /usr/share/dbconfig-common/dpkg/postrm.pgsql ]; then
+	. /usr/share/dbconfig-common/dpkg/postrm.pgsql
+	dbc_go sreview-master "$@"
+fi
+
+#DEBHELPER#

@@ -1,0 +1,7 @@
+<h1>Hi <%= $email %>!</h1>
+<p>Please select a talk to work with:</p>
+  %= form_for admin_talk => begin
+    %= select_field nonce => $talks, size => 25
+    <br>
+    %= submit_button
+  %end

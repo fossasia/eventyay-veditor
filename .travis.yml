@@ -1,0 +1,20 @@
+---
+language: perl
+perl:
+  - "5.24"
+  - "5.28"
+services:
+  - postgresql
+addons:
+  postgresql: "9.6"
+  apt:
+    packages:
+    - ffmpeg
+    - inkscape
+    - bs1770gain
+env:
+  - SREVIEW_TESTDB=sreview SREVIEW_NONSTRICT=1
+before_script:
+  - psql -c "create database $SREVIEW_TESTDB;" -U postgres
+script:
+  - perl Makefile.PL && make TEST_VERBOSE=1 test

@@ -1,0 +1,108 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+
+use File::Basename;
+use File::Temp qw/tempdir/;
+use Media::Convert::Asset;
+use Media::Convert::Asset::ProfileFactory;
+use Media::Convert::Normalizer;
+use Media::Convert::Pipe;
+use SReview::Talk;
+use SReview::Config::Common;
+use SReview::Files::Factory;
+use Getopt::Long;
+use Pod::Usage;
+use Mojo::JSON qw/true/;
+
+my $inputfile = undef;
+my $talkid = undef;
+my $talknonce = undef;
+my $talkslug = undef;
+my $help = undef;
+my $audionormal = undef;
+
+GetOptions("t|talkid=i" => \$talkid,
+           "n|nonce=s" => \$talknonce,
+           "s|slug=s" => \$talkslug,
+           "i|input=s" => \$inputfile,
+	   "a|audionormal" => \$audionormal,
+           "h|help" => \$help) or pod2usage("command line invalid");
+
+if($help) {
+    pod2usage(0);
+}
+
+die "require an input file name\n" unless defined($inputfile);
+die "Require exactly one of a nonce, a talk ID, or a talk slug\n" unless scalar(grep({defined}($talkid, $talknonce, $talkslug))==1);
+
+my $config = SReview::Config::Common::setup();
+my $talk;
+if(defined($talknonce)) {
+    $talk = SReview::Talk->by_nonce($talknonce);
+} elsif(defined($talkid)) {
+    $talk = SReview::Talk->new(talkid => $talkid);
+} elsif(defined($talkslug)) {
+    $talk = SReview::Talk->by_slug($talkslug);
+}
+$talk->set_state("injecting", "running");
+$talk = SReview::Talk->new(talkid => $talk->talkid);
+my $input = Media::Convert::Asset->new(url => $inputfile);
+my $output_coll = SReview::Files::Factory->create("intermediate", $config->get("pubdir"));
+my $outputfile = $output_coll->add_file(relname => $talk->relative_name . "/main.mkv");
+
+$output_coll->delete_files(relnames => [dirname($talk->relative_name)]);
+
+my $checks = $config->get("inject_transcode_skip_checks");
+my $do_transcode = 0;
+if(defined($checks)) {
+	foreach my $prop(keys %$checks) {
+		my $attr = $input->meta->find_attribute_by_name($prop);
+		my $val = $attr->get_value($input);
+		if(!defined($val)) {
+			print("Skip check failed: value for $prop not defined for input video. Retranscoding.\n");
+			$do_transcode = 1;
+			last;
+		}
+		if(exists($checks->{$prop}{min}) && exists($checks->{$prop}{max})) {
+			if(($val > $checks->{$prop}{max}) || ($val < $checks->{$prop}{min})) {
+				print("Skip check failed: value for $prop out of bounds on input video. Retranscoding.\n");
+				$do_transcode = 1;
+				last;
+			} else {
+				next;
+			}
+		}
+		if(exists($checks->{$prop}{val})) {
+			if($val ne $checks->{$prop}{val}) {
+				print("Skip check failed: value for $prop does not string-equal expected value. Retranscoding.\n");
+				$do_transcode = 1;
+				last;
+			} else {
+				next;
+			}
+		}
+		print("Skip check failed: configuration for $prop does not have both a minimum and maximum, or misses exact value. Retranscoding.\n");
+		last;
+	}
+}
+
+if(!$do_transcode) {
+	print("Skip check successful; not transcoding, just copying data around.\n");
+	Media::Convert::Pipe->new(inputs => [$input], output => Media::Convert::Asset->new(url => $outputfile->filename), vcopy => 1, acopy => 1)->run();
+} else {
+	if($audionormal) {
+		my $dirname = tempdir("injectXXXXXX", DIR => $config->get("workdir"), CLEANUP => 1);
+		my $normalized = Media::Convert::Asset->new(url => join("/", $dirname, basename($inputfile)));
+		Media::Convert::Normalizer->new(input => $input, output => $normalized)->run();
+		$input = Media::Convert::Asset->new(url => $normalized->url);
+	}
+	my $profile = Media::Convert::Asset::ProfileFactory->create($config->get("input_profile"), $input, $config->get('extra_profiles'));
+	Media::Convert::Pipe->new(inputs => [$input], output => Media::Convert::Asset->new(url => $outputfile->filename, reference => $profile), vcopy => 0, acopy => 0)->run();
+}
+$outputfile->store_file;
+$talk->set_flag('is_injected' => true);
+$talk->add_correction(serial => -1);
+$talk->done_correcting;
+$talk->state_done("injecting");

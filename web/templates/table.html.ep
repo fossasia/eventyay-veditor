@@ -1,0 +1,45 @@
+%layout "default";
+% if($autorefresh) {
+<script>
+setTimeout({location.reload(false)}, 30000);
+</script>
+% }
+<h1><%= $header %></h1>
+<table class='table table-hover'>
+  % if(defined($titlerow)) {
+    <tr>
+    % foreach my $cell(@$titlerow) {
+    <th><%= $cell %></th>
+    % }
+    </tr>
+  % }
+  % my $rowtype = 0;
+  % foreach my $row(@$rows) {
+  <tr>
+    % $rowtype = 1 - $rowtype;
+    % foreach my $cell(@$row) {
+      <td><%== $cell %></td>
+    % }
+  </tr>
+  % }
+</table>
+% if(defined($totals)) {
+<h2>Totals</h2>
+<table class='table table-hover'>
+  % if(defined($tottitrow)) {
+    <tr>
+    % foreach my $cell(@$tottitrow) {
+    <th><%= $cell %></th>
+    % }
+    </tr>
+  % }
+  % foreach my $row(@$totals) {
+  <tr>
+    % $rowtype = 1 - $rowtype;
+    % foreach my $cell(@$row) {
+      <td><%= $cell %></td>
+    % }
+  % }
+  </tr>
+% }
+</table>

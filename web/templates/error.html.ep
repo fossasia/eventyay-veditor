@@ -1,0 +1,5 @@
+%layout 'default';
+%title 'SReview error';
+<h1>Error</h1>
+<p><%== $message %></p>
+<p>Go to <%= link_to 'the SReview home page' => '/' %> or <%= link_to 'the video status overview page' => '/overview' %>.</p>

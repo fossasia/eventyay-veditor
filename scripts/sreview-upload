@@ -1,0 +1,130 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+
+use DBI;
+use Mojo::Template;
+use SReview::Config::Common;
+use Media::Convert::Asset::ProfileFactory;
+use SReview::Files::Factory;
+use SReview::Talk;
+
+use feature 'signatures';
+no warnings 'experimental::signatures';
+
+my $config = SReview::Config::Common::setup;
+
+my $dbh = DBI->connect($config->get('dbistring'), '', '') or die "Cannot connect to database!";
+
+my $talkid = shift;
+
+die "need talk ID!" unless defined($talkid);
+
+my $configprefix = shift;
+$configprefix = 'upload' unless defined($configprefix);
+
+if($configprefix eq "upload") {
+        $dbh->prepare("UPDATE talks SET state='uploading', progress='running' WHERE id=?")->execute($talkid);
+} elsif($configprefix eq "sync") {
+        $dbh->prepare("UPDATE talks SET state='syncing', progress='running' WHERE id=?")->execute($talkid);
+} else {
+        $dbh->prepare("UPDATE talks SET state='remove', progress='running' WHERE id=?")->execute($talkid);
+}
+
+my $mt = Mojo::Template->new;
+$mt->vars(1);
+
+sub run_command($file, $relative, $base, $talk) {
+	foreach my $command(@{$config->get("${configprefix}_actions")}) {
+		my @run;
+		foreach my $component(@$command) {
+			my $rendered = $mt->render($component, {file => $file, relative_file => $relative, base => $base, talk => $talk });
+			chomp($rendered);
+			push @run, $rendered;
+		}
+                print "'" . join("' '", @run) . "'\n";
+		system(@run);
+	}
+}
+
+my $actions = $config->get("${configprefix}_actions");
+
+exit 0 if(scalar(@$actions) < 1);
+
+my $raw_file = $dbh->prepare("SELECT filename FROM raw_files JOIN talks ON raw_files.room = talks.room JOIN events ON talks.event = events.id WHERE events.name = ? AND stream='' LIMIT 1");
+$raw_file->execute($config->get("event"));
+$raw_file = $raw_file->fetchrow_hashref();
+my $r_file = SReview::Files::Factory->create("input", $config->get('inputglob'))->get_file(relname => $raw_file->{filename});
+$raw_file = Media::Convert::Asset->new(url => $r_file->filename);
+my $talk_st = $dbh->prepare("SELECT event, event_output, room, room_output, starttime::date AS date, to_char(starttime, 'yyyy') AS year, name AS title, subtitle, slug FROM talk_list WHERE id = ?");
+$talk_st->execute($talkid);
+my $talkdata = $talk_st->fetchrow_hashref;
+
+my $output_coll = SReview::Files::Factory->create("output", $config->get('outputdir'));
+my $inter_coll = SReview::Files::Factory->create("intermediate", $config->get('pubdir'));
+
+my $subdirs = $config->get('output_subdirs');
+my @elems = ();
+
+foreach my $subdir(@$subdirs) {
+	push @elems, $talkdata->{$subdir};
+}
+
+my $reldir = join('/', @elems);
+
+my $talk = SReview::Talk->new(talkid => $talkid);
+
+my @files = ();
+
+if($configprefix eq "upload" && ($config->get('cleanup') eq "all" || $config->get('cleanup') eq 'previews')) {
+	push @files, (
+		$inter_coll->get_file(relname => $talk->relative_name . "/main.mkv"),
+		$inter_coll->get_file(relname => $talk->relative_name . "/main.webm"),
+		$inter_coll->get_file(relname => $talk->relative_name . "/main.mp4"),
+		$inter_coll->get_file(relname => $talk->relative_name . "/post.mkv"),
+		$inter_coll->get_file(relname => $talk->relative_name . "/post.webm"),
+		$inter_coll->get_file(relname => $talk->relative_name . "/post.mp4"),
+		$inter_coll->get_file(relname => $talk->relative_name . "/post.png"),
+		$inter_coll->get_file(relname => $talk->relative_name . "/pre.mkv"),
+		$inter_coll->get_file(relname => $talk->relative_name . "/pre.webm"),
+		$inter_coll->get_file(relname => $talk->relative_name . "/pre.mp4"),
+		$inter_coll->get_file(relname => $talk->relative_name . "/pre.png"),
+		$inter_coll->get_file(relname => $talk->relative_name . "/sorry.png"),
+	);
+	for my $count(0, 1, 2) {
+		for my $ext(qw/wav mp3 ogg/) {
+			push @files, $inter_coll->get_file(relname => $talk->relative_name . "/audio$count.$ext");
+		}
+	}
+}
+
+my $exts = [];
+
+if($configprefix ne "sync") {
+        foreach my $profile(@{$config->get('output_profiles')}) {
+                push @$exts, Media::Convert::Asset::ProfileFactory->create($profile, $raw_file, $config->get('extra_profiles'))->exten();
+        }
+} else {
+        $exts = $config->get('sync_extensions');
+}
+
+foreach my $ext(@$exts) {
+        my $basename = join('.', $talkdata->{slug}, $ext);
+	my $file = $output_coll->get_file(relname => join('/', $reldir, $basename));
+	run_command($file->valid_path_filename, $file->relname, $file->basepath, $talk);
+	if($config->get('cleanup') eq "all" || $config->get('cleanup') eq 'output') {
+		push @files, (
+			$file,
+			$output_coll->get_file(relname => $file->relname . "/multipass-0.log"),
+		);
+	}
+}
+
+if (scalar(@files) > 0) {
+	foreach my $file(@files) {
+		$file->delete;
+	}
+}
+
+$dbh->prepare("UPDATE talks SET progress='done' WHERE id = ?")->execute($talkid);

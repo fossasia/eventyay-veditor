@@ -1,0 +1,176 @@
+#!/usr/bin/perl -w
+
+# SReview, a web-based video review and transcoding system
+# Copyright (c) 2016-2017, Wouter Verhelst <w@uter.be>
+#
+# SReview is free software: you can redistribute it and/or modify it
+# under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public
+# License along with this program.  If not, see
+# <http://www.gnu.org/licenses/>.
+
+use strict;
+use warnings;
+
+use utf8;
+use DBI;
+use File::Path qw/make_path/;
+use File::Temp qw/tempdir/;
+use SReview::Config::Common;
+use SReview::Talk;
+use Media::Convert::Asset;
+use Media::Convert::Pipe;
+use SReview::Files::Factory;
+
+=head1 NAME
+
+sreview-notranscode - copy the output of L<sreview-cut> into media files without transcodes or credits
+
+=head1 SYNOPSIS
+
+sreview-notranscode TALKID
+
+=head1 DESCRIPTION
+
+C<sreview-transcode> performs the following actions:
+
+=over
+
+=item *
+
+Look up the talk with id TALKID in the database.
+
+=item *
+
+Copy the talk's "preview" video into the output directory under the correct
+name
+
+=back
+
+sreview-notranscode can be used in situations where SReview is only used
+as an upload system for videos that are injected with sreview-inject
+and/or the /i/ URL, and where transcodes and/or credits are not
+necessary.
+
+=head1 CONFIGURATION
+
+C<sreview-transcode> considers the following configuration values:
+
+=over
+
+=cut
+
+my $config = SReview::Config::Common::setup;
+
+=item dbistring
+
+The DBI string used to connect to the database
+
+=cut
+
+my $dbh = DBI->connect($config->get('dbistring'), '', '') or die "Cannot connect to database!";
+my $talkid = $ARGV[0];
+
+$dbh->prepare("UPDATE talks SET progress='running' WHERE id = ?")->execute($talkid);
+
+my $talk = SReview::Talk->new(talkid => $talkid);
+
+my $slug = $talk->slug;
+
+my $data = $dbh->prepare("SELECT eventid, event, event_output, room, room_output, starttime::date AS date, to_char(starttime, 'yyyy') AS year, speakers, name AS title, subtitle, apologynote FROM talk_list WHERE id = ?");
+$data->execute($talkid);
+my $drow = $data->fetchrow_hashref();
+
+=item pubdir
+
+The directory in which to find the output of C<sreview-cut>
+
+=cut
+
+my $input_coll = SReview::Files::Factory->create("intermediate", $config->get("pubdir"));
+
+=item outputdir
+
+The directory in which to store production output data
+
+=cut
+
+my $output_coll = SReview::Files::Factory->create("output", $config->get("outputdir"));
+
+=item output_subdirs
+
+Array of fields on which to base subdirectories to be created under
+C<outputdir>. The fields can be one or more of:
+
+=over
+
+=item eventid
+
+The ID number of the event that this talk was recorded at
+
+=item event
+
+The name of the event that this talk was recorded at
+
+=item event_output
+
+The "outputdir" value in row of the events field of the event that this
+talk was recorded at.
+
+=item room
+
+The name of the room in which this talk was recorded
+
+=item date
+
+The date on which this talk occurred
+
+=item year
+
+The year in which this talk occurred
+
+=back
+
+=cut
+
+my @elems = ();
+foreach my $subdir(@{$config->get('output_subdirs')}) {
+	push @elems, $drow->{$subdir};
+}
+my $relprefix = join('/', @elems);
+
+=item preview_exten
+
+The extension of the preview video, as well as the output video
+
+=cut
+
+my $main_input_file = $input_coll->get_file(relname => $talk->relative_name . "/main." . $config->get("preview_exten"));
+
+my $input = Media::Convert::Asset->new(url => $main_input_file->filename);
+my $output_file = $output_coll->add_file(relname => join('/', $relprefix, $slug . "." . $config->get("preview_exten")));
+my $output = Media::Convert::Asset->new(url => $output_file->filename);
+
+Media::Convert::Pipe->new(inputs => [$input], output => $output, vcopy => 1, acopy => 1)->run();
+
+$output_file->store_file;
+
+$dbh = DBI->connect($config->get('dbistring'), '', '') or die "Could not reconnect to database for state update!";
+
+$dbh->prepare("UPDATE talks SET progress = 'done' WHERE id = ?")->execute($talkid);
+
+=head1 SEE ALSO
+
+L<sreview-cut>, L<sreview-previews>, L<sreview-skip>, L<sreview-config>,
+L<Media::Convert::Asset::ProfileFactory>, L<SReview::Talk>, L<Mojo::Template>.
+L<sreview-transcode>
+
+=cut

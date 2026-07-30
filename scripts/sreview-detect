@@ -1,0 +1,195 @@
+#!/usr/bin/perl -w
+
+# SReview, a web-based video review and transcoding system
+# Copyright (c) 2016-2017, Wouter Verhelst <w@uter.be>
+#
+# SReview is free software: you can redistribute it and/or modify it
+# under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public
+# License along with this program.  If not, see
+# <http://www.gnu.org/licenses/>.
+
+=head1 NAME
+
+sreview-detect - detect new files for SReview
+
+=head1 SYNOPSIS
+
+sreview-detect [--verbose] [--day-finish] [--help] [--process-max=N]
+
+=head1 DESCRIPTION
+
+sreview-detect is used to detect new files in the SReview input
+directory, and add them to the database. Additionally, sreview-detect
+will update the length (but not the other metadata) of files that
+already exist in the database. This makes it safe to run on input files
+that are still being written to.
+
+It is designed to be run from cron (or a similar scheduling system) on a
+regular basis. Care should be taken to not overload the server on which
+it runs; while at the same time it should run regularly enough so that
+review is not waiting for too long.
+
+=head1 OPTIONS
+
+=head2 --verbose
+
+Produce verbose output. Will log which files are being examined.
+
+Defaults to on if the environment variable C<KUBERNETES_PORT> exists,
+off otherwise.
+
+=head2 --day-finish
+
+Normally, C<sreview-detect> migrates talks to the next state from
+C<waiting_for_files> if there is enough content available to fill all
+the scheduled time for that talk (minus 5 seconds, to account for the
+fact that sometimes the video does not I<exactly> add up to the
+correct length). This is normally what you want, when cameras record
+continuously and content is uploaded in between breaks in talks.
+
+However, if the final talk of the day ends early, and the recording
+system is shut down immediately when the speaker stops speaking but
+before the scheduled time for the talk has arrived, then SReview will
+never see enough content for the talk to be considered "complete", and
+that final talk will remain stuck in the C<waiting_for_files> state.
+
+To remedy this, use the C<--day-finish> flag. This will migrate all
+talks that are still in the C<waiting_for_files> state, but for which at
+least I<some> content was found. This will correctly ignore talks that
+are scheduled for the next day, but will allow talks for which some
+content was found to move to the cutting state.
+
+=head2 --process-max=I<N>
+
+Set the maximum number of files that will be processed in a single run;
+0 means no limit. Defaults to 0.
+
+=cut
+
+use strict;
+use warnings;
+
+use DBI;
+use SReview::Config::Common;
+use Media::Convert::Asset;
+use SReview::Files::Factory;
+
+use Net::Domain qw(hostname);
+use Getopt::Long;
+use Pod::Usage;
+use DateTime;
+use DateTime::TimeZone;
+use DateTime::Format::Pg;
+
+$| = 1; # autoflush stdout
+
+my $finished_for_today = 0;
+my $verbose = 0;
+$verbose = 1 if exists($ENV{KUBERNETES_PORT});
+my $help = 0;
+my $max_process = 0;
+
+GetOptions('verbose' => \$verbose, "day-finished" => \$finished_for_today, "help" => \$help, "process-max=i" => \$max_process);
+
+pod2usage(-exitval => 0) if $help;
+
+my $config = SReview::Config::Common::setup;
+
+my $collection = SReview::Files::Factory->create("input", $config->get("inputglob"));
+
+my $dbh = DBI->connect($config->get('dbistring'), '', '') or die "Cannot connect to database!";
+
+$dbh->prepare("UPDATE raw_files SET filename = substring(filename FROM ?), collection_name = 'input' WHERE filename LIKE ? AND collection_name IS NULL")->execute(length($collection->baseurl), $collection->baseurl . "%") or die $!;
+
+$dbh->begin_work;
+
+my $exists = $dbh->prepare("SELECT mtime FROM raw_files WHERE filename = ? AND collection_name = 'input'");
+my $add = $dbh->prepare("INSERT INTO raw_files(filename, room, starttime, endtime, stream, mtime, collection_name) VALUES (?, (SELECT id FROM rooms WHERE altname = ? OR name = ?), ?::timestamptz, ?::timestamptz + ?::interval, ?, ?, 'input')");
+my $update = $dbh->prepare("UPDATE raw_files SET endtime = starttime + ?::interval, mtime = ? WHERE filename = ? AND collection_name = 'input'");
+
+print "searching collection at " . $collection->baseurl . ", accessing for files using " . $collection->fileclass . "\n" if $verbose;
+
+my $host = hostname();
+
+my $tz = DateTime::TimeZone->new(name => $config->get('file_timezone'));
+my $total = 0;
+
+FILE:
+foreach my $file(@{$collection->children}) {
+	next if ($file->is_collection);
+	print "\nfound " . $file->url if $verbose;
+	my $parse_re = $config->get('parse_re');
+	next unless $file->url =~ /$parse_re/;
+	print " ...passes regex" if $verbose;
+
+	my $room = $+{room};
+	next unless defined($room);
+
+	my $stream = $+{stream};
+	$stream = '' unless defined $stream;
+
+	my %parsed = ( %+ );
+	delete $parsed{room};
+	delete $parsed{stream};
+
+	my $start = DateTime->new(%parsed, time_zone => $tz);
+	$exists->execute($file->relname);
+	my $row = $exists->fetchrow_hashref;
+        my %args;
+        if(defined($config->get('canonical_duration'))) {
+                $args{canonical_duration} = $config->get('canonical_duration');
+        }
+	if($exists->rows == 0) {
+		print " ...is new" if $verbose;
+                # We do the below bit twice, since $file->filename triggers a
+                # download and we only want to do that if we need to.
+                my $video = Media::Convert::Asset->new(url => $file->filename, %args);
+                my $length;
+                eval {
+                        $length = $video->duration;
+                };
+                if($@) {
+                        print "... skipped, file can't be parsed" if $verbose;
+                        next FILE;
+                }
+                next unless defined($length);
+		$start = DateTime::Format::Pg->format_datetime($start);
+		$add->execute($file->relname, $room, $room, $start, $start, $length, $stream, $file->mtime->epoch);
+		$file = undef;
+		print "... stored" if $verbose;
+	} else {
+		print " ... is known" if $verbose;
+		next unless ($row->{mtime} != $file->mtime->epoch);
+		print " ... but has changed" if $verbose;
+                my $video = Media::Convert::Asset->new(url => $file->filename, %args);
+                my $length = $video->duration;
+		next unless defined($length);
+		$update->execute("$length", $file->mtime->epoch, $file->relname);
+		$file = undef;
+		print " ... length stored" if $verbose
+	}
+	$total++;
+	last if $max_process > 0 && $total >= $max_process;
+}
+
+print "\ndone\n" if $verbose;
+
+my $full = $dbh->prepare("UPDATE talks SET progress = 'done' WHERE state = 'waiting_for_files' AND progress < 'done' AND id IN (select talkid FROM raw_talks WHERE talks_length <= (raw_total + '5 seconds'::interval)) AND endtime < now() - '20 minutes'::interval");
+$full->execute();
+my $partial = $dbh->prepare("UPDATE talks SET progress = 'running' WHERE state = 'waiting_for_files' AND progress < 'running' AND id IN (select distinct talkid FROM raw_talks)");
+$partial->execute();
+
+if($finished_for_today) {
+	$dbh->prepare("UPDATE talks SET progress='done' WHERE state='waiting_for_files' AND progress > 'waiting' AND progress < 'done'")->execute();
+}
+
+$dbh->commit;

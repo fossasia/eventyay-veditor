@@ -1,0 +1,5 @@
+%layout 'default';
+%title 'SReview';
+<h1>SReview video review system</h1>
+<p>If you have an account, <%= link_to 'log in here' => 'login' %>. If you received a review link, please follow that link instead.</p>
+<p>If you simply wish to know the state of a talk, go to the <%= link_to 'video overview page' => 'overview' %>.</p>
