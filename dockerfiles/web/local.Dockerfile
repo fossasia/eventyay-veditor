@@ -42,12 +42,13 @@ RUN python3 -m venv /venv && /venv/bin/pip install torch --extra-index-url https
 
 RUN mkdir /etc/sreview
 
+RUN mkdir -p /srv/sreview/web/public/video && ln -sf /srv/sreview/web/public/e /srv/sreview/web/public/video/e
 WORKDIR /usr/share/sreview/
 
 ADD /lib/ /usr/local/lib/site_perl/
 ADD /scripts/sreview-config /usr/src/scripts/sreview-config
 
-RUN cd /usr/src/scripts/ && ./sreview-config --action=update --set=adminpw=dev --set=adminuser=dev@dev.dev  --set=secret=INSECURE_DEV_SECRET --set=dbistring=dbi:Pg:dbname=sreviewdb\;host=db\;user=sreviewuser\;password=sreviewpassword --set=api_key=devkey --set=event=testevent
+RUN cd /usr/src/scripts/ && ./sreview-config --action=update --set=adminpw=dev --set=adminuser=dev@dev.dev  --set=secret=INSECURE_DEV_SECRET --set=dbistring=dbi:Pg:dbname=sreviewdb\;host=db\;user=sreviewuser\;password=sreviewpassword --set=api_key=devkey --set=event=testevent --set=vid_prefix="" --set=preview_exten=mp4
 
 CMD ./sreview-web daemon
 EXPOSE 8080

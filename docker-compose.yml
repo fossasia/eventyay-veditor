@@ -11,6 +11,7 @@ services:
       - ./dev-incoming/:/srv/sreview/incoming/
       - ./dev-script-output/:/srv/sreview/script-output/
       - ./dev-output/:/srv/sreview/output/
+      - ./dev-public-video/:/srv/sreview/web/public/e/
     ports:
       - 3000:3000
     depends_on:
