@@ -1,5 +1,30 @@
 # SReview
 
+## Quick Start (Setup and Test from Scratch)
+
+If you are setting up SReview for the first time or want to run a quick test, follow these steps:
+
+1. **Start the environment:** Ensure Docker Desktop is running, then start all services in the background:
+   ```bash
+   docker compose up -d --build
+   ```
+2. **Access the Web Interface:** Open `http://localhost:3000` in your web browser. You will see a test event already created for you.
+3. **Simulate a Camera Upload:** Drop a raw video file (e.g., an `.mp4` or `.mkv` file) into the `dev-incoming/testroom/2026-07-24/` folder. Name the file `08:30:00.mkv` to match the exact start time of the pre-configured test talk.
+4. **Run the Detector:** Tell SReview to scan the incoming folder for the new file and match it to the schedule:
+   ```bash
+   docker compose exec web perl /usr/src/scripts/sreview-detect --day-finished --verbose
+   ```
+   Refresh your browser. The "My Test Video" talk will now be in the `waiting_for_files` or `cutting` state.
+5. **Start the Background Dispatcher:** Run the background worker that handles video cutting, transcoding, and preview generation:
+   ```bash
+   docker compose exec web perl -I /usr/src/lib /usr/src/scripts/sreview-dispatch
+   ```
+   Watch the terminal as it processes the video. Once it finishes the `generating_previews` state, refresh your browser. The state will now be `preview`.
+6. **Human Review:** In the web dashboard, click on the **"My Test Video"** hyperlink. You will be taken to the review player where you can adjust start/end times via sliders and select the preferred audio channel. Click "Approve" when done.
+7. **Final Rendering:** The background dispatcher will wake up again, apply your edits, stitch the final credits, and output the polished video into the `dev-output/` folder!
+
+---
+
 This is SReview, a video review system. It takes input files, stores
 their lengths in a database, combines those lengths and their starttime
 with a schedule it has of an event to see which talks are fully
