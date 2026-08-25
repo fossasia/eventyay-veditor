@@ -1,0 +1,84 @@
+[project]
+name = "eventyay-veditor"
+dynamic = ["version"]
+requires-python = ">=3.12"
+description = "Video review and transcode plugin for eventyay"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+keywords = ["Eventyay"]
+authors = [
+    {name = "FOSSASIA", email = "contact@fossasia.org"},
+]
+maintainers = [
+    {name = "FOSSASIA", email = "contact@fossasia.org"},
+]
+
+dependencies = [
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=9.1.1",
+    "pytest-django>=4.12.0",
+    "pytest-env>=1.6.0",
+    "pytest-rerunfailures>=16.4",
+]
+
+[dependency-groups]
+dev = [
+    "ruff",
+]
+
+[project.entry-points."pretix.plugin"]
+veditor = "veditor"
+
+[build-system]
+requires = [
+    "setuptools",
+]
+
+[project.urls]
+homepage = "https://github.com/fossasia/eventyay-veditor"
+repository = "https://github.com/fossasia/eventyay-veditor"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+"veditor" = [
+    "templates/**/*",
+    "static/**/*",
+    "locale/**/*",
+]
+
+[tool.setuptools.dynamic]
+version = {attr = "veditor.__version__"}
+
+[tool.setuptools.packages.find]
+include = ["veditor*"]
+namespaces = false
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "eventyay.config.settings"
+testpaths = ["tests"]
+
+[tool.pytest_env]
+EVY_RUNNING_ENVIRONMENT = "testing"
+EVY_POSTGRES_HOST = "localhost"
+EVY_POSTGRES_PORT = "5432"
+EVY_POSTGRES_USER = "postgres"
+EVY_POSTGRES_PASSWORD = "postgres"
+EVY_POSTGRES_DB = "eventyay-db"
+
+[tool.ruff]
+line-length = 160
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["N802", "E402"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+known-first-party = ["veditor"]
+known-third-party = ["eventyay"]

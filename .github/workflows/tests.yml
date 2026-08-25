@@ -1,0 +1,77 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, dev]
+    paths-ignore:
+      - "veditor/locale/**"
+  pull_request:
+    branches: [main, dev]
+    paths-ignore:
+      - "veditor/locale/**"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    name: Veditor Plugin Tests
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: eventyay-db
+        options: >-
+          --health-cmd "pg_isready -U postgres -d eventyay-db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    steps:
+      - name: Checkout eventyay-veditor plugin
+        uses: actions/checkout@v7
+
+      - name: Clone eventyay
+        run: |
+          git clone https://github.com/fossasia/eventyay.git ../eventyay
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y gettext libjpeg-dev zlib1g-dev libpq-dev
+
+      - name: Set up eventyay environment
+        run: |
+          cd ../eventyay/app
+          uv sync --all-extras --all-groups
+          uv pip install -e ../../eventyay-veditor
+
+      - name: Run tests
+        env:
+          EVY_RUNNING_ENVIRONMENT: testing
+          EVY_POSTGRES_HOST: localhost
+          EVY_POSTGRES_PORT: 5432
+          EVY_POSTGRES_USER: postgres
+          EVY_POSTGRES_PASSWORD: postgres
+          EVY_POSTGRES_DB: eventyay-db
+        run: |
+          . ../eventyay/app/.venv/bin/activate
+          pytest tests --reruns 3

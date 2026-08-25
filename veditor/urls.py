@@ -1,0 +1,2 @@
+urlpatterns = []
+event_patterns = []
