@@ -12,6 +12,9 @@ on:
       - 'veditor/locale/**'
       - 'veditor/static/**'
 
+permissions:
+  contents: read
+
 jobs:
   ruff:
     name: ruff
