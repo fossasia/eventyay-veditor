@@ -1,5 +1,0 @@
-recursive-include veditor/static *
-recursive-include veditor/templates *
-recursive-include veditor/locale *
-include LICENSE
-include README.md

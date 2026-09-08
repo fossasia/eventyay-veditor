@@ -41,22 +41,20 @@ A plugin for [eventyay](https://github.com/fossasia/eventyay) that integrates [V
 
 When using the Eventyay Docker development setup, you can also clone this repository into the gitignored `plugins/` directory at the eventyay repo root so it is installed automatically.
 
-## Code Style
+## Code Style & Linting
 
-This plugin enforces code style via `ruff` (import sorting + formatting). CI runs these checks automatically on every PR.
+This plugin enforces code style via `pre-commit` running `ruff` (linting + formatting). CI runs these checks automatically on every PR.
 
-To check locally:
+To install the git hooks locally:
 
 ```bash
-ruff check --select I .
-ruff format --check .
+uv run pre-commit install
 ```
 
-To auto-fix:
+To run manually across all files:
 
 ```bash
-ruff check --select I --fix .
-ruff format .
+uv run pre-commit run --all-files
 ```
 
 ## Running Tests

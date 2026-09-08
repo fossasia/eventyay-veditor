@@ -30,8 +30,5 @@ jobs:
     - name: Install dependencies
       run: uv sync --all-groups
 
-    - name: Run ruff (import sorting)
-      run: uv run ruff check --select I .
-
-    - name: Run ruff (format check)
-      run: uv run ruff format --check .
+    - name: Run pre-commit
+      run: uv run pre-commit run --all-files

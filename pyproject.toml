@@ -27,6 +27,7 @@ test = [
 [dependency-groups]
 dev = [
     "ruff",
+    "pre-commit",
 ]
 
 [project.entry-points."pretix.plugin"]
