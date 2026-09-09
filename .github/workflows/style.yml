@@ -16,8 +16,8 @@ permissions:
   contents: read
 
 jobs:
-  ruff:
-    name: ruff
+  pre-commit:
+    name: pre-commit
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7

@@ -4,7 +4,8 @@ dynamic = ["version"]
 requires-python = ">=3.12"
 description = "Video review and transcode plugin for eventyay"
 readme = "README.md"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 keywords = ["Eventyay"]
 authors = [
     {name = "FOSSASIA", email = "contact@fossasia.org"},
