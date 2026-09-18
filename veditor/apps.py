@@ -22,4 +22,7 @@ class VeditorApp(PluginConfig):
         category = "FEATURE"
 
     def ready(self):
-        from . import signals  # noqa: F401 — registers signal receivers
+        from . import (
+            signals,  # noqa: F401 — registers signal receivers
+            tasks,  # noqa: F401 — registers Celery tasks
+        )

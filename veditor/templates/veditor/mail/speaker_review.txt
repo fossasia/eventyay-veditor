@@ -1,0 +1,11 @@
+{% load i18n %}Hello {{ speaker_name }},
+
+Good news! The video recording for your talk "{{ talk_title }}" at {{ event.name }} has been reviewed and approved by the event team.
+
+You can now review your recording, view comments, and inspect playback in the VEditor Studio:
+{{ magic_link }}
+
+This link provides direct, secure access to your talk's review page. Please do not forward it to anyone else.
+
+Best regards,
+The {{ event.name }} Team

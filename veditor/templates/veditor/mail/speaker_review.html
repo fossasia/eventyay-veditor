@@ -1,0 +1,158 @@
+{% load i18n %}<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% trans "Video Review Ready" %}: {{ talk_title }}</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f3f4f6;
+            margin: 0;
+            padding: 0;
+            -webkit-text-size-adjust: none;
+            color: #1f2937;
+        }
+        .container {
+            max-width: 600px;
+            margin: 32px auto;
+            background: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            border: 1px solid #e5e7eb;
+        }
+        .header {
+            background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+            padding: 28px 32px;
+            color: #ffffff;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 20px;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+        }
+        .header .subtitle {
+            margin-top: 6px;
+            color: #9ca3af;
+            font-size: 13px;
+        }
+        .content {
+            padding: 32px;
+            line-height: 1.6;
+            font-size: 15px;
+        }
+        .greeting {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: #111827;
+        }
+        .talk-box {
+            background-color: #f8fafc;
+            border-left: 4px solid #3b82f6;
+            padding: 16px 20px;
+            border-radius: 0 6px 6px 0;
+            margin: 20px 0;
+        }
+        .talk-box .label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #64748b;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .talk-box .title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #0f172a;
+        }
+        .btn-container {
+            text-align: center;
+            margin: 32px 0 24px 0;
+        }
+        .btn {
+            background-color: #2563eb;
+            color: #ffffff !important;
+            padding: 14px 28px;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 15px;
+            display: inline-block;
+            box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25);
+        }
+        .notice {
+            background: #fefce8;
+            border: 1px solid #fef08a;
+            border-radius: 6px;
+            padding: 12px 16px;
+            font-size: 13px;
+            color: #854d0e;
+            margin-top: 24px;
+        }
+        .fallback-link {
+            font-size: 12px;
+            color: #6b7280;
+            word-break: break-all;
+            margin-top: 16px;
+        }
+        .footer {
+            background-color: #f9fafb;
+            padding: 20px 32px;
+            border-top: 1px solid #e5e7eb;
+            font-size: 13px;
+            color: #6b7280;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>{% trans "VEditor Video Studio" %}</h1>
+            <div class="subtitle">{{ event.name }}</div>
+        </div>
+        <div class="content">
+            <div class="greeting">{% trans "Hello" %} {{ speaker_name }},</div>
+            <p>
+                {% blocktrans trimmed with event_name=event.name %}
+                Good news! The video recording for your presentation at <strong>{{ event_name }}</strong> has been reviewed and approved by the event team.
+                {% endblocktrans %}
+            </p>
+
+            <div class="talk-box">
+                <div class="label">{% trans "Presentation" %}</div>
+                <div class="title">{{ talk_title }}</div>
+            </div>
+
+            <p>
+                {% trans "You can now review your recording, view comments, and inspect playback directly in the VEditor Studio workspace:" %}
+            </p>
+
+            <div class="btn-container">
+                <a href="{{ magic_link }}" class="btn" target="_blank" rel="noopener noreferrer">
+                    {% trans "Review Your Video in VEditor Studio" %} &rarr;
+                </a>
+            </div>
+
+            <div class="notice">
+                <strong>{% trans "Security Notice" %}:</strong>
+                {% trans "This review link contains a short-lived single sign-on token granting direct access to your talk. Please do not forward or share this email." %}
+            </div>
+
+            <div class="fallback-link">
+                <p style="margin-bottom: 4px;">{% trans "If the button above does not work, copy and paste this URL into your browser:" %}</p>
+                <a href="{{ magic_link }}" style="color: #2563eb;">{{ magic_link }}</a>
+            </div>
+        </div>
+        <div class="footer">
+            {% blocktrans trimmed with event_name=event.name %}
+            Sent automatically by Eventyay on behalf of the {{ event_name }} organizers.
+            {% endblocktrans %}
+        </div>
+    </div>
+</body>
+</html>
