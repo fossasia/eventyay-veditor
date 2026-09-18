@@ -32,14 +32,45 @@ class VEditorClient:
         api_key: str | None = None,
         timeout: float | None = None,
         session: requests.Session | None = None,
+        event: Any | None = None,
     ):
-        # 1. Resolve configuration from parameters, settings, or environment
+        # 1. Resolve configuration from parameters, event settings, Django settings, or environment
         def _get_conf(name: str) -> Any:
+            if event is not None and hasattr(event, "settings"):
+                val = event.settings.get(name.lower())
+                if val:
+                    return val
             if getattr(settings, "configured", False):
                 return getattr(settings, name, None)
             return None
 
-        self.base_url = base_url or _get_conf("VEDITOR_API_BASE_URL") or os.environ.get("VEDITOR_API_BASE_URL")
+        event_has_custom_url = bool(event is not None and hasattr(event, "settings") and event.settings.get("veditor_api_base_url"))
+        event_custom_key = event.settings.get("veditor_api_key") if event is not None and hasattr(event, "settings") else None
+
+        resolved_base_url = (
+            base_url
+            or _get_conf("VEDITOR_API_BASE_URL")
+            or _get_conf("VEDITOR_BASE_URL")
+            or os.environ.get("VEDITOR_API_BASE_URL")
+            or os.environ.get("VEDITOR_BASE_URL")
+        )
+        if not resolved_base_url and event is not None:
+            resolved_base_url = getattr(settings, "VEDITOR_BASE_URL", None) or os.environ.get("VEDITOR_BASE_URL", "http://localhost:8080")
+
+        self.event = event
+        self.base_url = resolved_base_url.rstrip("/") if resolved_base_url else None
+
+        # Prevent leaking global VEDITOR_API_KEY to unverified custom event URLs
+        if event_has_custom_url and not event_custom_key and not api_key:
+            allowed = getattr(settings, "VEDITOR_ALLOWED_ORIGINS", None)
+            parsed_url = urlparse(self.base_url) if self.base_url else None
+            origin = f"{parsed_url.scheme}://{parsed_url.netloc}" if parsed_url else ""
+            if not allowed or origin not in allowed:
+                raise VEditorConfigError(
+                    "Cannot use global VEDITOR_API_KEY with a custom unallowlisted event URL. "
+                    "Configure an event-specific API key or add the origin to VEDITOR_ALLOWED_ORIGINS."
+                )
+
         self.api_key = api_key or _get_conf("VEDITOR_API_KEY") or os.environ.get("VEDITOR_API_KEY")
 
         resolved_timeout = timeout if timeout is not None else _get_conf("VEDITOR_REQUEST_TIMEOUT") or os.environ.get("VEDITOR_REQUEST_TIMEOUT")
@@ -84,6 +115,19 @@ class VEditorClient:
         parsed = urlparse(self.base_url)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
             raise VEditorConfigError(f"Invalid VEditor base URL '{self.base_url}'. Must start with http:// or https://.")
+
+        hostname = (parsed.hostname or "").lower()
+        is_loopback = hostname in ("localhost", "127.0.0.1", "::1")
+        if parsed.scheme == "http" and not is_loopback:
+            raise VEditorConfigError(
+                f"Insecure HTTP URL '{self.base_url}' is only permitted for loopback addresses (localhost, 127.0.0.1). Production URLs must use HTTPS."
+            )
+
+        allowed = getattr(settings, "VEDITOR_ALLOWED_ORIGINS", None) if getattr(settings, "configured", False) else None
+        if allowed:
+            origin = f"{parsed.scheme}://{parsed.netloc}"
+            if origin not in allowed and parsed.netloc not in allowed and parsed.hostname not in allowed:
+                raise VEditorConfigError(f"The VEditor URL origin '{origin}' is not in VEDITOR_ALLOWED_ORIGINS.")
 
         self.base_url = self.base_url.rstrip("/")
 
@@ -169,27 +213,84 @@ class VEditorClient:
             The live VEditor schedule import endpoint matches and upserts talks based on
             `(event_id, title, start)` and returns `{"status": "ok", "imported_count": N}`.
         """
+        try:
+            normalized_event_id: int | str = int(event_id)
+        except (ValueError, TypeError):
+            normalized_event_id = event_id
+
         serialized = serialize_talks(talk_slots, event_id=event_id)
-        payload = {"event_id": event_id, "talks": serialized}
+        payload = {"event_id": normalized_event_id, "talks": serialized}
         return self._request("POST", "/talks/schedule/import", json=payload)
+
+    def get_scoped_event_id(self) -> int:
+        """Resolve the target event ID in VEditor from the event-scoped API key.
+
+        Queries GET /events, which automatically returns the event(s) permitted
+        for the authenticated event-scoped API key. Disambiguates if multiple events
+        are returned by matching the associated event's slug or name.
+        """
+        response_data = self._request("GET", "/events")
+        if isinstance(response_data, list) and response_data:
+            if len(response_data) == 1:
+                first_event = response_data[0]
+                if isinstance(first_event, dict) and "id" in first_event:
+                    return int(first_event["id"])
+            elif self.event is not None:
+                event_slug = getattr(self.event, "slug", None)
+                event_name = getattr(self.event, "name", None)
+                matched = []
+                for ev in response_data:
+                    if not isinstance(ev, dict):
+                        continue
+                    ext_id = ev.get("external_id")
+                    ev_name = ev.get("name")
+                    if event_slug and ext_id and str(ext_id) == str(event_slug):
+                        matched.append(ev)
+                    elif event_name and ev_name and str(ev_name) == str(event_name):
+                        matched.append(ev)
+                if len(matched) == 1 and "id" in matched[0]:
+                    return int(matched[0]["id"])
+                if len(matched) > 1:
+                    raise VEditorError(
+                        f"Multiple events matched slug/name for '{event_slug}' in VEditor.",
+                        response_data=response_data,
+                    )
+                raise VEditorError(
+                    f"Multiple events returned by VEditor for API key, and cannot disambiguate for event '{event_slug}'.",
+                    response_data=response_data,
+                )
+            else:
+                raise VEditorError(
+                    "Ambiguous API key scope: multiple events associated with this key in VEditor.",
+                    response_data=response_data,
+                )
+        raise VEditorError("No event associated with this API key was found in VEditor.", response_data=response_data)
 
     def request_sso_jwt(
         self,
         event_id: str,
         talk_id: str | None = None,
-        role: str = "organiser",
+        role: str = "organizer",
+        email: str | None = None,
+        display_name: str | None = None,
     ) -> str:
-        """Request a scoped SSO JWT token for browser handoff or speaker review."""
-        if role == "organiser":
+        """Request a scoped SSO JWT token for browser handoff, reviewer QA, or speaker review."""
+        normalized_role = "organizer" if role in ("organiser", "organizer") else role
+        if normalized_role == "organizer":
             endpoint = f"/events/{event_id}/sso-token"
-            payload = {"role": "organiser"}
-        elif role == "speaker":
+            payload = {"role": "organizer"}
+        elif normalized_role == "speaker":
             if not talk_id:
                 raise ValueError("talk_id is required when requesting a speaker SSO token")
             endpoint = f"/talks/{talk_id}/sso-token"
             payload = {"role": "speaker"}
         else:
-            raise ValueError(f"Unsupported role '{role}'. Allowed roles are 'organiser' and 'speaker'.")
+            raise ValueError(f"Unsupported role '{role}'. Allowed roles are 'organizer' and 'speaker'.")
+
+        if email:
+            payload["email"] = email
+        if display_name:
+            payload["display_name"] = display_name
 
         response_data = self._request("POST", endpoint, json=payload)
 

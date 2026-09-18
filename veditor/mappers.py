@@ -104,5 +104,15 @@ def serialize_talk(talk_slot: Any, event_id: str | None = None) -> dict[str, Any
 
 
 def serialize_talks(talk_slots: list[Any], event_id: str | None = None) -> list[dict[str, Any]]:
-    """Serialize a list of TalkSlot instances to VEditor talk dictionaries."""
-    return [serialize_talk(slot, event_id=event_id) for slot in talk_slots]
+    """Serialize a list of TalkSlot instances to VEditor talk dictionaries, deduplicating records."""
+    serialized = []
+    seen = set()
+    for slot in talk_slots:
+        data = serialize_talk(slot, event_id=event_id)
+        # Deduplicate per slot occurrence using external_id (or title) and start time
+        identifier = data.get("external_id") or data.get("title")
+        key = (data.get("event_id"), identifier, data.get("start"))
+        if key not in seen:
+            seen.add(key)
+            serialized.append(data)
+    return serialized

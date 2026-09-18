@@ -23,6 +23,7 @@ test = [
     "pytest-django>=4.12.0",
     "pytest-env>=1.6.0",
     "pytest-rerunfailures>=16.4",
+    "responses>=0.25.0",
 ]
 
 [dependency-groups]
@@ -63,6 +64,7 @@ namespaces = false
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "eventyay.config.settings"
 testpaths = ["tests"]
+addopts = "--nomigrations"
 
 [tool.pytest_env]
 EVY_RUNNING_ENVIRONMENT = "testing"
