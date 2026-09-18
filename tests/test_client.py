@@ -119,6 +119,31 @@ def test_serialize_talk_with_invalid_string_timestamp():
         serialize_talk(dict_talk)
 
 
+def test_serialize_talks_deduplication():
+    # Duplicate talk slot representations from multiple schedule versions
+    slots = [
+        {"external_id": "1", "title": "Keynote", "start": "2026-06-01T10:00:00Z"},
+        {"external_id": "1", "title": "Keynote", "start": "2026-06-01T10:00:00Z"},
+        {"external_id": "2", "title": "Workshop", "start": "2026-06-01T11:00:00Z"},
+    ]
+    serialized = serialize_talks(slots, event_id="1")
+    assert len(serialized) == 2
+    assert serialized[0]["title"] == "Keynote"
+    assert serialized[1]["title"] == "Workshop"
+
+
+def test_serialize_talks_distinct_external_ids_same_title_and_start():
+    # Talks with different external_ids but identical title and start time (e.g. TBA / Lightning talk)
+    slots = [
+        {"external_id": "sub-1", "title": "Lightning Talk", "start": "2026-06-01T10:00:00Z"},
+        {"external_id": "sub-2", "title": "Lightning Talk", "start": "2026-06-01T10:00:00Z"},
+    ]
+    serialized = serialize_talks(slots, event_id="1")
+    assert len(serialized) == 2
+    assert serialized[0]["external_id"] == "sub-1"
+    assert serialized[1]["external_id"] == "sub-2"
+
+
 # ============================================================================
 # Client Configuration Unit Tests
 # ============================================================================
@@ -153,6 +178,24 @@ def test_client_init_missing_base_url():
 def test_client_init_invalid_base_url():
     with pytest.raises(VEditorConfigError, match="Invalid VEditor base URL"):
         VEditorClient(base_url="not-a-valid-url", api_key="some-key")
+
+
+def test_client_init_insecure_http_rejected():
+    with pytest.raises(VEditorConfigError, match="Insecure HTTP URL .* is only permitted for loopback addresses"):
+        VEditorClient(base_url="http://remote.veditor.example.com", api_key="some-key")
+
+
+def test_client_init_loopback_http_allowed():
+    client = VEditorClient(base_url="http://127.0.0.1:8000", api_key="some-key")
+    assert client.base_url == "http://127.0.0.1:8000"
+
+
+def test_client_init_allowed_origins(settings):
+    settings.VEDITOR_ALLOWED_ORIGINS = ["https://trusted.veditor.com"]
+    with pytest.raises(VEditorConfigError, match="not in VEDITOR_ALLOWED_ORIGINS"):
+        VEditorClient(base_url="https://untrusted.veditor.com", api_key="some-key")
+    client = VEditorClient(base_url="https://trusted.veditor.com", api_key="some-key")
+    assert client.base_url == "https://trusted.veditor.com"
 
 
 def test_client_init_missing_api_key():
@@ -195,6 +238,28 @@ def test_client_init_retry_adapter_configured():
     assert https_adapter is not None
     assert http_adapter.max_retries.total == 3
     assert 502 in http_adapter.max_retries.status_forcelist
+
+
+def test_client_init_from_event_settings():
+    class MockSettings:
+        def __init__(self, data):
+            self.data = data
+
+        def get(self, key):
+            return self.data.get(key)
+
+    mock_event = SimpleNamespace(
+        settings=MockSettings(
+            {
+                "veditor_api_base_url": "https://veditor.eventyay.com",
+                "veditor_api_key": "event-specific-key",
+            }
+        )
+    )
+    with patch.dict("os.environ", {}, clear=True):
+        client = VEditorClient(event=mock_event)
+        assert client.base_url == "https://veditor.eventyay.com"
+        assert client.api_key == "event-specific-key"
 
 
 # ============================================================================
@@ -267,6 +332,65 @@ def test_request_sso_jwt_organiser():
 
     token = client.request_sso_jwt(event_id="fossasia-2026", role="organiser")
     assert token == "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dummy_organiser_jwt"
+
+
+@responses.activate
+def test_get_scoped_event_id_success():
+    client = VEditorClient(base_url="https://veditor.test", api_key="test-key")
+    responses.add(
+        responses.GET,
+        "https://veditor.test/events",
+        json=[{"id": 42, "name": "Test Event"}],
+        status=200,
+    )
+    event_id = client.get_scoped_event_id()
+    assert event_id == 42
+
+
+@responses.activate
+def test_get_scoped_event_id_empty_raises():
+    client = VEditorClient(base_url="https://veditor.test", api_key="test-key")
+    responses.add(
+        responses.GET,
+        "https://veditor.test/events",
+        json=[],
+        status=200,
+    )
+    with pytest.raises(VEditorError, match="No event associated"):
+        client.get_scoped_event_id()
+
+
+@responses.activate
+def test_get_scoped_event_id_disambiguates():
+    event = SimpleNamespace(slug="summit-2026", name="FOSSASIA Summit 2026")
+    client = VEditorClient(base_url="https://veditor.test", api_key="test-key", event=event)
+    responses.add(
+        responses.GET,
+        "https://veditor.test/events",
+        json=[
+            {"id": 10, "external_id": "other-event", "name": "Other"},
+            {"id": 42, "external_id": "summit-2026", "name": "FOSSASIA Summit 2026"},
+        ],
+        status=200,
+    )
+    assert client.get_scoped_event_id() == 42
+
+
+@responses.activate
+def test_get_scoped_event_id_multiple_ambiguous_raises():
+    event = SimpleNamespace(slug="unknown-slug", name="Unknown Event")
+    client = VEditorClient(base_url="https://veditor.test", api_key="test-key", event=event)
+    responses.add(
+        responses.GET,
+        "https://veditor.test/events",
+        json=[
+            {"id": 10, "external_id": "event-1", "name": "Event 1"},
+            {"id": 20, "external_id": "event-2", "name": "Event 2"},
+        ],
+        status=200,
+    )
+    with pytest.raises(VEditorError, match="cannot disambiguate"):
+        client.get_scoped_event_id()
 
 
 @responses.activate
