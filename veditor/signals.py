@@ -5,10 +5,9 @@ from __future__ import annotations
 from django.dispatch import receiver
 from django.urls import resolve, reverse
 from django.utils.translation import gettext_lazy as _
-from eventyay.control.signals import nav_event, nav_event_common
+from eventyay.control.signals import nav_event_common
 
 
-@receiver(nav_event, dispatch_uid="veditor_nav_event")
 @receiver(nav_event_common, dispatch_uid="veditor_nav_event_common")
 def control_nav_veditor(sender, request=None, **kwargs) -> list[dict]:
     """Attach the Video Editor navigation tab in the organizer dashboard."""
