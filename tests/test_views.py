@@ -9,6 +9,7 @@ from django.contrib.sessions.middleware import SessionMiddleware
 from django.core.exceptions import PermissionDenied
 from django.test import RequestFactory
 from django.urls import reverse
+from eventyay.control.signals import nav_event, nav_event_common
 
 from veditor.exceptions import VEditorNetworkError, VEditorSyncError
 from veditor.signals import control_nav_veditor
@@ -495,3 +496,12 @@ def test_connect_view_post_save_settings_preserves_existing_key(event, organizer
     assert response.status_code == 302
     assert event.settings.get("veditor_api_base_url") == "https://editor.example.com"
     assert event.settings.get("veditor_api_key") == "original-secret-key"
+
+
+def test_signals_nav_registration():
+    """Verify VEditor is registered only with the common navigation signal."""
+    tickets_uids = {key[0] for key, _, _, _ in nav_event.receivers}
+    common_uids = {key[0] for key, _, _, _ in nav_event_common.receivers}
+
+    assert "veditor_nav_event" not in tickets_uids
+    assert "veditor_nav_event_common" in common_uids
