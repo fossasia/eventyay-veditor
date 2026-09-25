@@ -10,6 +10,7 @@ import os
 import time
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlparse
 
 from django.conf import settings
 from django.db import DatabaseError
@@ -18,7 +19,7 @@ from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 
-from .tasks import process_talk_approved
+from .tasks import process_talk_approved, process_talk_published
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +182,10 @@ class WebhookView(View):
 
         # Extract and validate event signal details
         event_type = payload.get("event") or "talk.approved"
-        if event_type != "talk.approved":
+        if event_type == "ping":
+            return JsonResponse({"status": "pong", "message": "Webhook verified"}, status=200)
+
+        if event_type not in ("talk.approved", "talk.published"):
             return JsonResponse({"error": f"Unsupported webhook event type: {event_type}"}, status=400)
 
         talk_id = payload.get("talk_id")
@@ -190,16 +194,39 @@ class WebhookView(View):
         if talk_id is None or talk_id == "" or event_id is None or event_id == "":
             return JsonResponse({"error": "Missing required fields: event_id and talk_id"}, status=400)
 
+        video_url = None
+        if event_type == "talk.published":
+            raw_url = payload.get("video_url")
+            if not raw_url or not isinstance(raw_url, str) or not raw_url.strip():
+                return JsonResponse({"error": "Missing or invalid video_url for talk.published event"}, status=400)
+            video_url = raw_url.strip()
+            parsed_video = urlparse(video_url)
+            if parsed_video.scheme not in ("http", "https") or not parsed_video.netloc:
+                return JsonResponse({"error": "video_url must be a valid HTTP or HTTPS URL with host"}, status=400)
+
+            if external_id is None or not str(external_id).strip():
+                return JsonResponse({"error": "Missing or invalid external_id for talk.published event"}, status=400)
+            external_id = str(external_id).strip()
+
         # Asynchronously dispatch supported events
         try:
-            process_talk_approved.delay(
-                event_id=event_id,
-                talk_id=talk_id,
-                external_id=external_id,
-                raw_payload=payload,
-            )
+            if event_type == "talk.published":
+                process_talk_published.delay(
+                    event_id=event_id,
+                    talk_id=talk_id,
+                    video_url=video_url,
+                    external_id=external_id,
+                    raw_payload=payload,
+                )
+            else:
+                process_talk_approved.delay(
+                    event_id=event_id,
+                    talk_id=talk_id,
+                    external_id=external_id,
+                    raw_payload=payload,
+                )
         except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to enqueue process_talk_approved task: %s", exc)
+            logger.error("Failed to enqueue %s task: %s", event_type, exc)
             return JsonResponse({"error": "Failed to enqueue task"}, status=500)
 
         return JsonResponse({"status": "accepted"}, status=200)
