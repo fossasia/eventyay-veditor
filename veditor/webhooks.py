@@ -19,6 +19,7 @@ from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 
+from .operational_log import OUTCOME_FAILURE, OUTCOME_SUCCESS, log_operation
 from .tasks import process_talk_approved, process_talk_published
 
 logger = logging.getLogger(__name__)
@@ -116,6 +117,7 @@ class WebhookView(View):
     def post(self, request: HttpRequest, *args: Any, **kwargs: Any) -> HttpResponse:
         signature_header = request.headers.get("X-VEditor-Signature") or request.META.get("HTTP_X_VEDITOR_SIGNATURE")
         if not signature_header:
+            log_operation("webhook.inbound", OUTCOME_FAILURE, backend="veditor", error_code="missing_signature", status=401)
             return JsonResponse({"error": "Missing X-VEditor-Signature header"}, status=401)
 
         raw_body = request.body
@@ -182,7 +184,9 @@ class WebhookView(View):
 
         # Authenticate signature
         if not verify_hmac_signature(raw_body, signature_header, secret, timestamp=effective_ts):
+            log_operation("webhook.inbound", OUTCOME_FAILURE, backend="veditor", error_code="signature_invalid", status=401)
             return JsonResponse({"error": "Invalid webhook signature"}, status=401)
+        log_operation("webhook.inbound", OUTCOME_SUCCESS, backend="veditor", status=200)
 
         # Extract and validate event signal details
         event_type = payload.get("event") or "talk.approved"

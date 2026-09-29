@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import Any
 from urllib.parse import urlparse
 
@@ -19,6 +20,7 @@ from .exceptions import (
     VEditorSyncError,
 )
 from .mappers import serialize_talk, serialize_talks
+from .operational_log import OUTCOME_FAILURE, OUTCOME_SUCCESS, log_operation
 
 
 class VEditorClient:
@@ -156,15 +158,32 @@ class VEditorClient:
         kwargs.setdefault("timeout", self.timeout)
         kwargs.setdefault("allow_redirects", False)
 
+        started = time.monotonic()
         try:
             response = self.session.request(method=method, url=url, **kwargs)
         except (requests.exceptions.Timeout, requests.exceptions.ConnectTimeout) as exc:
+            log_operation("connection.request", OUTCOME_FAILURE, backend="veditor", error_code="timeout", duration_ms=int((time.monotonic() - started) * 1000))
             raise VEditorNetworkError(f"VEditor request timed out: {exc}") from exc
         except (requests.exceptions.ConnectionError, requests.exceptions.ProxyError) as exc:
+            log_operation(
+                "connection.request", OUTCOME_FAILURE, backend="veditor", error_code="connection_error", duration_ms=int((time.monotonic() - started) * 1000)
+            )
             raise VEditorNetworkError(f"Failed to connect to VEditor at {self.base_url}: {exc}") from exc
         except requests.exceptions.RequestException as exc:
+            log_operation(
+                "connection.request", OUTCOME_FAILURE, backend="veditor", error_code="request_error", duration_ms=int((time.monotonic() - started) * 1000)
+            )
             raise VEditorNetworkError(f"VEditor network transport error: {exc}") from exc
 
+        failed = response.status_code >= 400
+        log_operation(
+            "connection.request",
+            OUTCOME_FAILURE if failed else OUTCOME_SUCCESS,
+            backend="veditor",
+            status=response.status_code,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            error_code="http_error" if failed else None,
+        )
         return self._handle_response(response)
 
     def _handle_response(self, response: requests.Response) -> Any:

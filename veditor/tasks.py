@@ -23,6 +23,7 @@ from .exceptions import (
     VEditorError,
     VEditorNetworkError,
 )
+from .operational_log import traced_job
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ except ImportError:
     retry_backoff=True,
     max_retries=3,
 )
+@traced_job("veditor.talk_approved")
 def process_talk_approved(
     self: Any = None,
     event_id: int | str | None = None,
@@ -340,6 +342,7 @@ def process_talk_approved(
     retry_backoff=True,
     max_retries=5,
 )
+@traced_job("veditor.talk_published")
 def process_talk_published(
     event_id: int | str,
     talk_id: int | str,
