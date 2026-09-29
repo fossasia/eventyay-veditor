@@ -124,9 +124,23 @@ class WebhookView(View):
         try:
             payload = json.loads(raw_body.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
+            log_operation(
+                "webhook.inbound",
+                OUTCOME_FAILURE,
+                backend="veditor",
+                error_code="invalid_payload",
+                status=400,
+            )
             return JsonResponse({"error": "Invalid JSON payload"}, status=400)
 
         if not isinstance(payload, dict):
+            log_operation(
+                "webhook.inbound",
+                OUTCOME_FAILURE,
+                backend="veditor",
+                error_code="invalid_payload",
+                status=400,
+            )
             return JsonResponse({"error": "Payload must be a JSON object"}, status=400)
 
         # Extract timestamp: prioritize signature header timestamp (bound cryptographically in v1 scheme)
@@ -141,10 +155,24 @@ class WebhookView(View):
 
         # Replay attack mitigation: Require a valid signed timestamp within tolerance
         if effective_ts is None:
+            log_operation(
+                "webhook.inbound",
+                OUTCOME_FAILURE,
+                backend="veditor",
+                error_code="missing_timestamp",
+                status=400,
+            )
             return JsonResponse({"error": "Missing required timestamp for replay protection"}, status=400)
 
         current_time = time.time()
         if abs(current_time - effective_ts) > TIMESTAMP_TOLERANCE_SECONDS:
+            log_operation(
+                "webhook.inbound",
+                OUTCOME_FAILURE,
+                backend="veditor",
+                error_code="stale_timestamp",
+                status=400,
+            )
             return JsonResponse(
                 {"error": "Webhook timestamp expired or clock skew exceeds tolerance"},
                 status=400,
@@ -167,6 +195,13 @@ class WebhookView(View):
                     secret = event_obj.settings.get("veditor_webhook_secret")
             except DatabaseError as exc:
                 logger.error("Database error looking up event-level webhook secret for event %s: %s", event_id, exc)
+                log_operation(
+                    "webhook.inbound",
+                    OUTCOME_FAILURE,
+                    backend="veditor",
+                    error_code="database_error",
+                    status=500,
+                )
                 return JsonResponse({"error": "Database error looking up event secret"}, status=500)
             except Exception as exc:  # noqa: BLE001
                 logger.debug("Failed looking up event-level webhook secret for event %s: %s", event_id, exc)
@@ -180,39 +215,81 @@ class WebhookView(View):
 
         if not secret:
             logger.error("VEditor webhook secret not configured")
+            log_operation(
+                "webhook.inbound",
+                OUTCOME_FAILURE,
+                backend="veditor",
+                error_code="missing_secret",
+                status=500,
+            )
             return JsonResponse({"error": "Webhook secret not configured on server"}, status=500)
 
         # Authenticate signature
         if not verify_hmac_signature(raw_body, signature_header, secret, timestamp=effective_ts):
             log_operation("webhook.inbound", OUTCOME_FAILURE, backend="veditor", error_code="signature_invalid", status=401)
             return JsonResponse({"error": "Invalid webhook signature"}, status=401)
-        log_operation("webhook.inbound", OUTCOME_SUCCESS, backend="veditor", status=200)
 
         # Extract and validate event signal details
         event_type = payload.get("event") or "talk.approved"
         if event_type == "ping":
+            log_operation("webhook.inbound", OUTCOME_SUCCESS, backend="veditor", status=200)
             return JsonResponse({"status": "pong", "message": "Webhook verified"}, status=200)
 
         if event_type not in ("talk.approved", "talk.published"):
+            log_operation(
+                "webhook.inbound",
+                OUTCOME_FAILURE,
+                backend="veditor",
+                error_code="unsupported_event",
+                status=400,
+            )
             return JsonResponse({"error": f"Unsupported webhook event type: {event_type}"}, status=400)
 
         talk_id = payload.get("talk_id")
         external_id = payload.get("external_id")
 
         if talk_id is None or talk_id == "" or event_id is None or event_id == "":
+            log_operation(
+                "webhook.inbound",
+                OUTCOME_FAILURE,
+                backend="veditor",
+                error_code="missing_fields",
+                status=400,
+            )
             return JsonResponse({"error": "Missing required fields: event_id and talk_id"}, status=400)
 
         video_url = None
         if event_type == "talk.published":
             raw_url = payload.get("video_url")
             if not raw_url or not isinstance(raw_url, str) or not raw_url.strip():
+                log_operation(
+                    "webhook.inbound",
+                    OUTCOME_FAILURE,
+                    backend="veditor",
+                    error_code="invalid_video_url",
+                    status=400,
+                )
                 return JsonResponse({"error": "Missing or invalid video_url for talk.published event"}, status=400)
             video_url = raw_url.strip()
             parsed_video = urlparse(video_url)
             if parsed_video.scheme not in ("http", "https") or not parsed_video.netloc:
+                log_operation(
+                    "webhook.inbound",
+                    OUTCOME_FAILURE,
+                    backend="veditor",
+                    error_code="invalid_video_url",
+                    status=400,
+                )
                 return JsonResponse({"error": "video_url must be a valid HTTP or HTTPS URL with host"}, status=400)
 
             if external_id is None or not str(external_id).strip():
+                log_operation(
+                    "webhook.inbound",
+                    OUTCOME_FAILURE,
+                    backend="veditor",
+                    error_code="missing_external_id",
+                    status=400,
+                )
                 return JsonResponse({"error": "Missing or invalid external_id for talk.published event"}, status=400)
             external_id = str(external_id).strip()
 
@@ -235,6 +312,14 @@ class WebhookView(View):
                 )
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to enqueue %s task: %s", event_type, exc)
+            log_operation(
+                "webhook.inbound",
+                OUTCOME_FAILURE,
+                backend="veditor",
+                error_code="enqueue_failed",
+                status=500,
+            )
             return JsonResponse({"error": "Failed to enqueue task"}, status=500)
 
+        log_operation("webhook.inbound", OUTCOME_SUCCESS, backend="veditor", status=200)
         return JsonResponse({"status": "accepted"}, status=200)
