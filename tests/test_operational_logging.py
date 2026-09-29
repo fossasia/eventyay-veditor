@@ -9,6 +9,7 @@ from veditor.operational_log import (
     OUTCOME_SUCCESS,
     log_operation,
     logged_request,
+    traced_job,
 )
 
 
@@ -102,3 +103,36 @@ def test_logged_request_records_status_without_url(captured, monkeypatch):
     assert extra["outcome"] == "success"
     assert "example.invalid" not in str(extra)
     assert "raw" not in str(extra)
+
+
+class _NetError(Exception):
+    pass
+
+
+class _Task:
+    def __init__(self, retries, limit):
+        self.request = type("Request", (), {"retries": retries})()
+        self.max_retries = limit
+        self.autoretry_for = (_NetError,)
+
+
+def test_autoretry_is_logged_as_retry_while_retries_remain(captured):
+    @traced_job("veditor.talk_approved")
+    def work(self):
+        raise _NetError()
+
+    with pytest.raises(_NetError):
+        work(_Task(retries=0, limit=3))
+
+    assert [item[1] for item in captured] == ["job.start", "job.retry"]
+
+
+def test_autoretry_is_logged_as_fail_when_retries_are_spent(captured):
+    @traced_job("veditor.talk_approved")
+    def work(self):
+        raise _NetError()
+
+    with pytest.raises(_NetError):
+        work(_Task(retries=3, limit=3))
+
+    assert [item[1] for item in captured] == ["job.start", "job.fail"]

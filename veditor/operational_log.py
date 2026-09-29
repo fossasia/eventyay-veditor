@@ -192,7 +192,20 @@ def traced_job(job_name):
             try:
                 result = fn(*args, **kwargs)
             except Exception as exc:
-                retried = type(exc).__name__ == "Retry"
+                task = args[0] if args else None
+                request = getattr(task, "request", None)
+                current = getattr(request, "retries", None)
+                limit = getattr(task, "max_retries", None)
+                autoretry = getattr(task, "autoretry_for", ()) or ()
+                will_retry = (
+                    isinstance(current, int)
+                    and not isinstance(current, bool)
+                    and isinstance(limit, int)
+                    and not isinstance(limit, bool)
+                    and current < limit
+                    and any(isinstance(exc, cls) for cls in autoretry)
+                )
+                retried = type(exc).__name__ == "Retry" or will_retry
                 log_operation(
                     "job.retry" if retried else "job.fail",
                     OUTCOME_FAILURE,
