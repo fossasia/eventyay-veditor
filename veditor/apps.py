@@ -22,6 +22,9 @@ class VeditorApp(PluginConfig):
         category = "FEATURE"
 
     def ready(self):
+        from .operational_log import log_plugin_loaded
+
+        log_plugin_loaded("veditor")
         from . import (
             signals,  # noqa: F401 — registers signal receivers
             tasks,  # noqa: F401 — registers Celery tasks

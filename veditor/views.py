@@ -21,6 +21,7 @@ from eventyay.control.permissions import EventPermissionRequiredMixin
 from .client import VEditorClient
 from .exceptions import VEditorConfigError, VEditorError
 from .forms import VEditorSettingsForm
+from .operational_log import OUTCOME_FAILURE, log_operation
 from .tasks import process_talk_approved
 
 logger = logging.getLogger(__name__)
@@ -175,6 +176,14 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
             talk_id = request.POST.get("talk_id")
             external_id = request.POST.get("external_id") or request.POST.get("submission_code")
             if not external_id and not talk_id:
+                log_operation(
+                    "job.fail",
+                    OUTCOME_FAILURE,
+                    backend="veditor",
+                    error_code="missing_talk",
+                    event_id=getattr(event, "pk", None),
+                    job_name="veditor.talk_approved",
+                )
                 messages.error(request, _("No talk selected for speaker review link dispatch."))
                 return redirect(
                     reverse(
@@ -200,6 +209,14 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                     )
                 except Exception as exc:
                     logger.warning("Direct dispatch failed, falling back to celery: %s", exc)
+                    log_operation(
+                        "job.fail",
+                        OUTCOME_FAILURE,
+                        backend="veditor",
+                        error_code="direct_dispatch_failed",
+                        event_id=getattr(event, "pk", None),
+                        job_name="veditor.talk_approved",
+                    )
 
             try:
                 process_talk_approved.delay(
@@ -219,6 +236,14 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                     )
                 except Exception as exc:
                     logger.exception("Speaker review dispatch failed: %s", exc)
+                    log_operation(
+                        "job.fail",
+                        OUTCOME_FAILURE,
+                        backend="veditor",
+                        error_code="dispatch_failed",
+                        event_id=getattr(event, "pk", None),
+                        job_name="veditor.talk_approved",
+                    )
                     messages.error(
                         request,
                         _("Failed to dispatch speaker review link: {error}").format(error=str(exc)),
@@ -241,6 +266,13 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
             # Auto-resolve target event ID from the event-scoped API key
             target_event_id = client.get_scoped_event_id()
         except (VEditorError, ValueError) as exc:
+            log_operation(
+                "connection.request",
+                OUTCOME_FAILURE,
+                backend="veditor",
+                error_code="connect_failed",
+                event_id=getattr(event, "pk", None),
+            )
             messages.error(
                 request,
                 _("Failed to connect to VEditor: {error}").format(error=str(exc)),
@@ -253,6 +285,13 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
             try:
                 client.sync_talks(event_id=target_event_id, talk_slots=talk_slots)
             except (VEditorError, ValueError) as exc:
+                log_operation(
+                    "connection.request",
+                    OUTCOME_FAILURE,
+                    backend="veditor",
+                    error_code="sync_failed",
+                    event_id=getattr(event, "pk", None),
+                )
                 messages.error(
                     request,
                     _("Failed to synchronize talks with VEditor: {error}").format(error=str(exc)),
@@ -283,6 +322,13 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
             redirect_url = f"{client.base_url}/studio?{query_params}"
             return HttpResponseRedirect(redirect_url)
         except (VEditorError, ValueError) as exc:
+            log_operation(
+                "connection.request",
+                OUTCOME_FAILURE,
+                backend="veditor",
+                error_code="sso_failed",
+                event_id=getattr(event, "pk", None),
+            )
             messages.error(
                 request,
                 _("Failed to establish VEditor SSO session: {error}").format(error=str(exc)),
