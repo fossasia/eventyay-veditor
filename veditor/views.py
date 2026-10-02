@@ -20,7 +20,7 @@ from eventyay.control.permissions import EventPermissionRequiredMixin
 
 from .client import VEditorClient
 from .exceptions import VEditorConfigError, VEditorError
-from .forms import VEditorSettingsForm
+from .forms import RoomRecordingAttachmentForm, VEditorSettingsForm
 from .tasks import process_talk_approved
 
 logger = logging.getLogger(__name__)
@@ -92,6 +92,13 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                 },
                 has_existing_key=has_saved_key,
             )
+
+        if "room_form" not in context:
+            context["room_form"] = RoomRecordingAttachmentForm(event=event)
+
+        rooms_list = list(event.rooms.all().order_by("name")) if hasattr(event, "rooms") else []
+        context["rooms"] = rooms_list
+        context["rooms_count"] = len(rooms_list)
 
         try:
             client = VEditorClient(event=event)
@@ -169,6 +176,49 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
             else:
                 context = self.get_context_data(**kwargs)
                 context["form"] = form
+                return self.render_to_response(context)
+
+        elif action == "attach_room_recording":
+            room_form = RoomRecordingAttachmentForm(request.POST, event=event)
+            if room_form.is_valid():
+                room_name = room_form.cleaned_data["room"]
+                source_path = room_form.cleaned_data["source_path"] or None
+                relative_key = room_form.cleaned_data["relative_key"] or None
+                recording_start = room_form.cleaned_data.get("recording_start") or None
+
+                try:
+                    client = VEditorClient(event=event)
+                    target_event_id = client.get_scoped_event_id()
+                    res = client.attach_room_recording(
+                        room=room_name,
+                        event_id=target_event_id,
+                        source_path=source_path,
+                        relative_key=relative_key,
+                        recording_start=recording_start,
+                    )
+                    attached_count = res.get("attached_count", 0) if isinstance(res, dict) else 0
+                    messages.success(
+                        request,
+                        _("Successfully attached room recording for room '{room}'. {count} talk(s) matched and queued for detection and cutting.").format(
+                            room=room_name, count=attached_count
+                        ),
+                    )
+                except (VEditorError, ValueError) as exc:
+                    logger.error("Failed attaching room recording for room %s: %s", room_name, exc)
+                    messages.error(
+                        request,
+                        _("Failed to attach room recording: {error}").format(error=str(exc)),
+                    )
+
+                return redirect(
+                    reverse(
+                        "plugins:veditor:connect",
+                        kwargs={"organizer": event.organizer.slug, "event": event.slug},
+                    )
+                )
+            else:
+                context = self.get_context_data(**kwargs)
+                context["room_form"] = room_form
                 return self.render_to_response(context)
 
         elif action == "resend_speaker_link":

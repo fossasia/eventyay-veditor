@@ -1,5 +1,6 @@
 """Unit tests for the VEditor API client, mappers, and exceptions."""
 
+import json
 from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -672,3 +673,75 @@ def test_client_allows_custom_url_with_explicit_event_key():
     client = VEditorClient(event=event_mock)
     assert client.base_url == "https://custom.test"
     assert client.api_key == "event-key-456"
+
+
+@responses.activate
+def test_attach_room_recording_with_source_path_success():
+    client = VEditorClient(base_url="https://veditor.test", api_key="test-key")
+    responses.add(
+        responses.POST,
+        "https://veditor.test/talks/room/attach-recording",
+        json={
+            "status": "ok",
+            "room": "Main Hall",
+            "event_id": 42,
+            "attached_count": 3,
+            "talk_ids": [101, 102, 103],
+        },
+        status=200,
+    )
+
+    result = client.attach_room_recording(
+        room="Main Hall",
+        event_id=42,
+        source_path="/media/ingest/day1/main_hall.mp4",
+        recording_start=datetime(2026, 9, 25, 9, 0, 0, tzinfo=UTC),
+    )
+
+    assert result["status"] == "ok"
+    assert result["attached_count"] == 3
+    assert result["room"] == "Main Hall"
+    assert result["event_id"] == 42
+    assert result["talk_ids"] == [101, 102, 103]
+
+    assert len(responses.calls) == 1
+    req_body = json.loads(responses.calls[0].request.body)
+    assert req_body["room"] == "Main Hall"
+    assert req_body["event_id"] == 42
+    assert req_body["source_path"] == "/media/ingest/day1/main_hall.mp4"
+    assert req_body["recording_start"] == "2026-09-25T09:00:00+00:00"
+
+
+@responses.activate
+def test_attach_room_recording_with_relative_key():
+    client = VEditorClient(base_url="https://veditor.test", api_key="test-key")
+    responses.add(
+        responses.POST,
+        "https://veditor.test/talks/room/attach-recording",
+        json={"status": "ok", "attached_count": 1, "room": "Room B", "event_id": 10, "talk_ids": [55]},
+        status=200,
+    )
+
+    result = client.attach_room_recording(
+        room="Room B",
+        event_id="10",
+        relative_key="day1/room_b.mp4",
+        recording_start="2026-09-25T10:00:00Z",
+    )
+
+    assert result["attached_count"] == 1
+    req_body = json.loads(responses.calls[0].request.body)
+    assert req_body["relative_key"] == "day1/room_b.mp4"
+    assert req_body["recording_start"] == "2026-09-25T10:00:00Z"
+
+
+def test_attach_room_recording_validation_errors():
+    client = VEditorClient(base_url="https://veditor.test", api_key="test-key")
+
+    # Missing room
+    with pytest.raises(ValueError, match="Room name is required"):
+        client.attach_room_recording(room="", source_path="/media/day1.mp4")
+
+    # Missing both relative_key and source_path
+    with pytest.raises(ValueError, match="Either relative_key or source_path must be provided"):
+        client.attach_room_recording(room="Main Hall")

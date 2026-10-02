@@ -505,3 +505,135 @@ def test_signals_nav_registration():
 
     assert "veditor_nav_event" not in tickets_uids
     assert "veditor_nav_event_common" in common_uids
+
+
+def test_connect_view_get_populates_rooms_in_room_form(event, organizer_user, rf):
+    mock_room1 = SimpleNamespace(name="Main Hall")
+    mock_room2 = SimpleNamespace(name="Workshop Room")
+    mock_rooms = MagicMock()
+    mock_rooms.all.return_value.order_by.return_value = [mock_room1, mock_room2]
+    mock_rooms.count.return_value = 2
+    event.rooms = mock_rooms
+
+    request = setup_request(rf.get(reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug})))
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    view = ConnectView()
+    view.setup(request, organizer=event.organizer.slug, event=event.slug)
+    context = view.get_context_data()
+
+    assert "room_form" in context
+    assert context["rooms_count"] == 2
+    choices = [c[0] for c in context["room_form"].fields["room"].choices]
+    assert "Main Hall" in choices
+    assert "Workshop Room" in choices
+
+
+def test_connect_view_post_attach_room_recording_success(event, organizer_user, rf):
+    mock_room1 = SimpleNamespace(name="Main Hall")
+    mock_rooms = MagicMock()
+    mock_rooms.all.return_value.order_by.return_value = [mock_room1]
+    event.rooms = mock_rooms
+
+    request = setup_request(
+        rf.post(
+            reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug}),
+            data={
+                "action": "attach_room_recording",
+                "room": "Main Hall",
+                "source_path": "/media/ingest/main_hall.mp4",
+                "recording_start": "2026-09-25T09:00:00Z",
+            },
+        )
+    )
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    with patch("veditor.views.VEditorClient") as mock_client_cls:
+        mock_client = mock_client_cls.return_value
+        mock_client.get_scoped_event_id.return_value = event.id
+        mock_client.attach_room_recording.return_value = {
+            "status": "ok",
+            "attached_count": 3,
+            "room": "Main Hall",
+            "event_id": event.id,
+            "talk_ids": [1, 2, 3],
+        }
+
+        view = ConnectView.as_view()
+        response = view(request, organizer=event.organizer.slug, event=event.slug)
+
+        assert response.status_code == 302
+        mock_client.attach_room_recording.assert_called_once_with(
+            room="Main Hall",
+            event_id=event.id,
+            source_path="/media/ingest/main_hall.mp4",
+            relative_key=None,
+            recording_start="2026-09-25T09:00:00Z",
+        )
+        messages = [str(m.message) for m in request._messages]
+        assert any("Successfully attached room recording for room 'Main Hall'" in m for m in messages)
+        assert any("3 talk(s) matched" in m for m in messages)
+
+
+def test_connect_view_post_attach_room_recording_validation_error(event, organizer_user, rf):
+    mock_room1 = SimpleNamespace(name="Main Hall")
+    mock_rooms = MagicMock()
+    mock_rooms.all.return_value.order_by.return_value = [mock_room1]
+    event.rooms = mock_rooms
+
+    request = setup_request(
+        rf.post(
+            reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug}),
+            data={
+                "action": "attach_room_recording",
+                "room": "Main Hall",
+            },
+        )
+    )
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    view = ConnectView.as_view()
+    response = view(request, organizer=event.organizer.slug, event=event.slug)
+
+    assert response.status_code == 200
+    assert "room_form" in response.context_data
+    assert response.context_data["room_form"].errors
+
+
+def test_connect_view_post_attach_room_recording_api_error(event, organizer_user, rf):
+    mock_room1 = SimpleNamespace(name="Main Hall")
+    mock_rooms = MagicMock()
+    mock_rooms.all.return_value.order_by.return_value = [mock_room1]
+    event.rooms = mock_rooms
+
+    request = setup_request(
+        rf.post(
+            reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug}),
+            data={
+                "action": "attach_room_recording",
+                "room": "Main Hall",
+                "source_path": "/media/nonexistent.mp4",
+            },
+        )
+    )
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    with patch("veditor.views.VEditorClient") as mock_client_cls:
+        mock_client = mock_client_cls.return_value
+        mock_client.get_scoped_event_id.return_value = event.id
+        mock_client.attach_room_recording.side_effect = VEditorSyncError("File not found on shared storage")
+
+        view = ConnectView.as_view()
+        response = view(request, organizer=event.organizer.slug, event=event.slug)
+
+        assert response.status_code == 302
+        messages = [str(m.message) for m in request._messages]
+        assert any("Failed to attach room recording: File not found on shared storage" in m for m in messages)

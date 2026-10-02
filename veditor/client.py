@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -25,6 +26,22 @@ class VEditorClient:
     """Single outbound API gateway for interacting with VEditor."""
 
     DEFAULT_TIMEOUT: float = 10.0
+
+    @classmethod
+    def resolve_base_url(cls, event: Any | None = None) -> str | None:
+        """Resolve the configured VEditor base URL for an event or global settings."""
+        if event is not None and hasattr(event, "settings"):
+            val = event.settings.get("veditor_api_base_url") or event.settings.get("veditor_base_url")
+            if val and str(val).strip():
+                return str(val).strip().rstrip("/")
+        if getattr(settings, "configured", False):
+            val = getattr(settings, "VEDITOR_API_BASE_URL", None) or getattr(settings, "VEDITOR_BASE_URL", None)
+            if val and str(val).strip():
+                return str(val).strip().rstrip("/")
+        env_val = os.environ.get("VEDITOR_API_BASE_URL") or os.environ.get("VEDITOR_BASE_URL")
+        if env_val and env_val.strip():
+            return env_val.strip().rstrip("/")
+        return None
 
     def __init__(
         self,
@@ -59,7 +76,8 @@ class VEditorClient:
         self.base_url = resolved_base_url.rstrip("/") if resolved_base_url else None
 
         # Prevent leaking global VEDITOR_API_KEY to unverified custom event URLs
-        if event_has_custom_url and not event_custom_key and not api_key:
+        global_key = (getattr(settings, "VEDITOR_API_KEY", None) if getattr(settings, "configured", False) else None) or os.environ.get("VEDITOR_API_KEY")
+        if global_key and event_has_custom_url and not event_custom_key and not api_key:
             allowed_raw = getattr(settings, "VEDITOR_ALLOWED_ORIGINS", None)
             allowed_set: set[str] = set()
             if isinstance(allowed_raw, str):
@@ -338,3 +356,55 @@ class VEditorClient:
             return response_data
 
         raise VEditorError("Unexpected response type from SSO token endpoint", response_data=response_data)
+
+    def attach_room_recording(
+        self,
+        room: str,
+        event_id: int | str | None = None,
+        relative_key: str | None = None,
+        source_path: str | None = None,
+        recording_start: str | datetime | None = None,
+    ) -> dict[str, Any]:
+        """Attach a continuous room recording to all scheduled sessions in that room.
+
+        Calls POST /talks/room/attach-recording on the VEditor server.
+        Matches talks in the specified room whose schedule falls within the
+        recording duration.
+
+        Args:
+            room: Name of the room as configured in the schedule.
+            event_id: Target event ID in VEditor. If None, auto-resolved via get_scoped_event_id().
+            relative_key: Path to recording file relative to VEditor's ingest roots.
+            source_path: Shared storage path to recording file accessible by VEditor.
+            recording_start: Optional ISO-8601 string or datetime of when recording began.
+
+        Returns:
+            Dict containing status, attached_count, room, event_id, talk_ids.
+        """
+        if not room or not str(room).strip():
+            raise ValueError("Room name is required to attach room recording.")
+
+        if not relative_key and not source_path:
+            raise ValueError("Either relative_key or source_path must be provided.")
+
+        payload: dict[str, Any] = {"room": str(room).strip()}
+
+        if event_id is not None:
+            try:
+                payload["event_id"] = int(event_id)
+            except (ValueError, TypeError):
+                payload["event_id"] = event_id
+
+        if relative_key:
+            payload["relative_key"] = str(relative_key).strip()
+
+        if source_path:
+            payload["source_path"] = str(source_path).strip()
+
+        if recording_start is not None:
+            if isinstance(recording_start, datetime):
+                payload["recording_start"] = recording_start.isoformat()
+            else:
+                payload["recording_start"] = str(recording_start).strip()
+
+        return self._request("POST", "/talks/room/attach-recording", json=payload)
