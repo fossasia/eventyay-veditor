@@ -1,176 +1,228 @@
-.veditor-dashboard-hero {
-    background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
-    color: #ffffff;
-    border-radius: 8px;
-    padding: 24px 28px;
-    margin-bottom: 24px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+/**
+ * VEditor Eventyay Plugin — Dashboard Styles
+ * Aligned with Eventyay's core design system and Bootstrap 3 tokens.
+ */
+
+.veditor-page-header {
+    margin: 10px 0 20px 0;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #e5e7eb;
 }
-.veditor-dashboard-hero h2 {
-    color: #ffffff;
-    margin-top: 0;
-    margin-bottom: 8px;
+
+.veditor-page-header h2 {
+    margin: 0 0 6px 0;
     font-size: 24px;
     font-weight: 600;
+    color: #1f2937;
 }
-.veditor-dashboard-hero p {
-    color: #d1d5db;
-    font-size: 14px;
-    line-height: 1.5;
-    margin-bottom: 0;
-    max-width: 750px;
+
+.veditor-page-header h2 i {
+    color: #3b82f6;
+    margin-right: 6px;
 }
-.veditor-hero-flex {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    flex-wrap: wrap;
-    gap: 15px;
-}
-.veditor-dot-icon {
-    font-size: 8px;
-}
-.veditor-card {
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    margin-bottom: 20px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-}
-.veditor-card-header {
-    padding: 16px 20px;
-    border-bottom: 1px solid #e5e7eb;
-    background: #f9fafb;
-    border-top-left-radius: 7px;
-    border-top-right-radius: 7px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-.veditor-card-title {
+
+.veditor-header-desc {
     margin: 0;
+    font-size: 14px;
+    color: #6b7280;
+}
+
+.veditor-status-badge {
+    font-size: 12px;
+    padding: 5px 12px;
+    border-radius: 12px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+.veditor-status-badge i {
+    font-size: 9px;
+}
+
+.veditor-panel {
+    border-color: #e5e7eb;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    margin-bottom: 24px;
+}
+
+.veditor-panel .panel-heading {
+    background-color: #f9fafb;
+    border-color: #e5e7eb;
+    color: #111827;
+    font-weight: 600;
+    padding: 14px 18px;
+}
+
+.veditor-panel .panel-title {
     font-size: 16px;
+    font-weight: 600;
+}
+
+.veditor-panel .panel-title i {
+    margin-right: 6px;
+    color: #4b5563;
+}
+
+.veditor-subwell {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 18px 20px;
+    margin-bottom: 20px;
+    box-shadow: none;
+}
+
+.veditor-subwell h4 {
+    margin-top: 0;
+    margin-bottom: 14px;
+    font-size: 15px;
     font-weight: 600;
     color: #111827;
 }
-.veditor-card-body {
-    padding: 20px;
-}
-.badge-status-connected {
-    background-color: #def7ec;
-    color: #03543f;
-    font-weight: 600;
-    padding: 5px 12px;
-    border-radius: 9999px;
-    font-size: 12px;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-}
-.badge-status-disconnected {
-    background-color: #fef08a;
-    color: #713f12;
-    font-weight: 600;
-    padding: 5px 12px;
-    border-radius: 9999px;
-    font-size: 12px;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-}
-.veditor-status-row {
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 6px;
-    padding: 14px 18px;
-    margin-bottom: 20px;
+
+.veditor-connection-bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-}
-.veditor-code-endpoint {
-    margin-left: 6px;
-}
-.veditor-status-subtext {
-    font-size: 12px;
-    margin-top: 4px;
-}
-.veditor-settings-panel {
-    border: 1px dashed #cbd5e1;
-}
-.veditor-settings-title {
-    margin-top: 0;
-    font-size: 15px;
-    font-weight: 600;
-}
-.veditor-well {
-    background: #ffffff;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 14px 18px;
+    background: #f8fafc;
     border: 1px solid #e2e8f0;
     border-radius: 6px;
-    box-shadow: none;
+    margin-bottom: 20px;
 }
-.veditor-well-title {
-    margin-top: 0;
-    font-size: 16px;
+
+.veditor-connection-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.veditor-endpoint-code {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 13px;
+    background: #f1f5f9;
+    color: #334155;
+    border: 1px solid #cbd5e1;
+    padding: 2px 7px;
+    border-radius: 4px;
+}
+
+.veditor-label-connected {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 10px;
     font-weight: 600;
 }
-.veditor-well-desc {
-    color: #4b5563;
+
+.veditor-schedule-summary {
     font-size: 14px;
+    color: #4b5563;
 }
-.veditor-action-form {
-    margin-top: 15px;
+
+.veditor-launch-actions {
     display: flex;
+    align-items: center;
     gap: 10px;
     flex-wrap: wrap;
-    align-items: center;
 }
-.veditor-callout {
-    border-left: 4px solid #3b82f6;
-    background: #eff6ff;
-    padding: 12px 16px;
-    border-radius: 0 6px 6px 0;
-    margin-bottom: 18px;
-    font-size: 13px;
-    color: #1e40af;
+
+.veditor-action-form {
+    display: inline-flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin: 0;
 }
-.veditor-table {
-    margin-bottom: 0;
-}
+
 .veditor-guide-body {
     font-size: 13px;
     line-height: 1.6;
 }
-.veditor-guide-list {
-    padding-left: 18px;
-    margin-bottom: 16px;
+
+.veditor-guide-steps {
+    padding-left: 20px;
+    margin: 0;
 }
-.veditor-guide-list-last {
-    padding-left: 18px;
+
+.veditor-guide-steps li {
+    margin-bottom: 12px;
+}
+
+.veditor-guide-steps li strong {
+    color: #111827;
+}
+
+.veditor-guide-steps li p {
+    margin-top: 2px;
+    margin-bottom: 0;
+    font-size: 13px;
+}
+
+.veditor-session-code {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-weight: 600;
+    font-size: 12px;
+    color: #374151;
+    background: #f3f4f6;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid #e5e7eb;
+}
+
+.veditor-status-cell {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.veditor-status-cell .label {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-weight: 500;
+}
+
+.veditor-table {
     margin-bottom: 0;
 }
-.veditor-guide-text {
-    margin-bottom: 16px;
+
+.veditor-table th {
+    font-weight: 600;
+    color: #374151;
+    border-bottom-width: 1px;
 }
+
+.veditor-table td {
+    vertical-align: middle !important;
+}
+
 .veditor-col-code {
     width: 12%;
 }
+
 .veditor-col-title {
-    width: 38%;
+    width: 40%;
 }
+
 .veditor-col-room {
     width: 15%;
 }
+
 .veditor-col-start {
     width: 15%;
 }
-.veditor-col-action {
-    width: 20%;
-    text-align: right;
+
+.veditor-col-status {
+    width: 18%;
 }
+
 .veditor-table-action-form {
     display: inline-block;
     margin: 0;
 }
-
-

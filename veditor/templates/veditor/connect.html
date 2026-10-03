@@ -3,170 +3,225 @@
 {% load static %}
 {% load tz %}
 
-{% block title %}{% trans "VEditor Video Studio" %} :: {{ event.name }}{% endblock %}
+{% block title %}{% trans "Video Editor (VEditor)" %} :: {{ event.name }}{% endblock %}
 
 {% block custom_header %}
 <link rel="stylesheet" href="{% static 'veditor/css/connect.css' %}">
 {% endblock %}
 
 {% block content %}
-<div class="veditor-dashboard-hero">
-    <div class="veditor-hero-flex">
-        <div>
-            <h2><i class="fa fa-video-camera"></i> {% trans "VEditor Video Studio" %}</h2>
-            <p>
-                {% blocktrans trimmed with event_name=event.name %}
-                Synchronize talks and seamlessly launch the VEditor video editing workspace for {{ event_name }}.
-                Manage recording pipelines, trim talk segments, and dispatch preview clips to speakers.
-                {% endblocktrans %}
-            </p>
+<div class="veditor-page-header">
+    <div class="pull-right">
+        {% if veditor_configured %}
+            <span class="label label-success veditor-status-badge">
+                <i class="fa fa-circle"></i> {% trans "Connected" %}
+            </span>
+        {% else %}
+            <span class="label label-warning veditor-status-badge">
+                <i class="fa fa-exclamation-triangle"></i> {% trans "Not Configured" %}
+            </span>
+        {% endif %}
+    </div>
+    <h2>
+        <i class="fa fa-video-camera"></i> {% trans "Video Editor (VEditor)" %}
+    </h2>
+    <p class="text-muted veditor-header-desc">
+        {% trans "Manage video recordings, speaker reviews, and published talk videos." %}
+    </p>
+</div>
+
+{% if not veditor_configured %}
+<div class="row">
+    <div class="col-xs-12 col-md-7">
+        <div class="panel panel-default veditor-panel">
+            <div class="panel-heading">
+                <h3 class="panel-title">
+                    <i class="fa fa-plug"></i> {% trans "Connect to VEditor" %}
+                </h3>
+            </div>
+            <div class="panel-body">
+                <p class="text-muted">
+                    {% trans "Connect your event to the VEditor service using an event-scoped API key." %}
+                </p>
+
+                <form method="post" action="">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="save_settings">
+                    <div class="form-group {% if form.veditor_api_key.errors %}has-error{% endif %}">
+                        <label for="{{ form.veditor_api_key.id_for_label }}">{{ form.veditor_api_key.label }} <span class="text-danger">*</span></label>
+                        {{ form.veditor_api_key }}
+                        {% if form.veditor_api_key.help_text %}
+                            <span class="help-block">{{ form.veditor_api_key.help_text }}</span>
+                        {% endif %}
+                        {% for error in form.veditor_api_key.errors %}
+                            <span class="help-block text-danger">{{ error }}</span>
+                        {% endfor %}
+                    </div>
+                    <div class="form-group {% if form.veditor_api_base_url.errors %}has-error{% endif %}">
+                        <label for="{{ form.veditor_api_base_url.id_for_label }}">{{ form.veditor_api_base_url.label }}</label>
+                        {{ form.veditor_api_base_url }}
+                        {% if form.veditor_api_base_url.help_text %}
+                            <span class="help-block">{{ form.veditor_api_base_url.help_text }}</span>
+                        {% endif %}
+                        {% for error in form.veditor_api_base_url.errors %}
+                            <span class="help-block text-danger">{{ error }}</span>
+                        {% endfor %}
+                    </div>
+                    <button type="submit" class="btn btn-primary" id="btn-save-settings">
+                        <i class="fa fa-check"></i> {% trans "Connect VEditor" %}
+                    </button>
+                </form>
+            </div>
         </div>
-        <div>
-            {% if veditor_configured %}
-                <span class="badge-status-connected">
-                    <i class="fa fa-circle veditor-dot-icon"></i> {% trans "Connected" %}
-                </span>
-            {% else %}
-                <span class="badge-status-disconnected">
-                    <i class="fa fa-exclamation-triangle"></i> {% trans "Not Configured" %}
-                </span>
-            {% endif %}
+    </div>
+    <div class="col-xs-12 col-md-5">
+        <div class="panel panel-info veditor-panel">
+            <div class="panel-heading">
+                <h3 class="panel-title">
+                    <i class="fa fa-info-circle"></i> {% trans "Setup & Integration Guide" %}
+                </h3>
+            </div>
+            <div class="panel-body veditor-guide-body">
+                <ol class="veditor-guide-steps">
+                    <li>
+                        <strong>{% trans "Generate an API Key:" %}</strong>
+                        <p class="text-muted">{% trans "Log in to your VEditor instance, open Events, and generate an API key for your target event." %}</p>
+                    </li>
+                    <li>
+                        <strong>{% trans "Connect Eventyay:" %}</strong>
+                        <p class="text-muted">{% trans "Paste the API key in the connection form. Eventyay automatically links to your event." %}</p>
+                    </li>
+                    <li>
+                        <strong>{% trans "Synchronize Schedule:" %}</strong>
+                        <p class="text-muted">{% trans "Publish your talks and launch the studio to begin trimming and editing recordings." %}</p>
+                    </li>
+                </ol>
+            </div>
         </div>
     </div>
 </div>
-
+{% else %}
 <div class="row">
-    <div class="col-xs-12 col-md-8">
-        <div class="veditor-card">
-            <div class="veditor-card-header">
-                <h3 class="veditor-card-title">
-                    <i class="fa fa-sliders"></i> {% trans "Integration & Launch" %}
-                </h3>
-                {% if veditor_configured %}
+    <div class="col-xs-12">
+        <!-- VEditor Connection & Studio Panel -->
+        <div class="panel panel-default veditor-panel">
+            <div class="panel-heading">
+                <div class="pull-right">
                     <button class="btn btn-default btn-xs" type="button" data-toggle="collapse" data-target="#settingsCollapse" aria-expanded="false" aria-controls="settingsCollapse">
                         <i class="fa fa-cog"></i> {% trans "Configure API Key" %}
                     </button>
-                {% endif %}
+                    <button class="btn btn-default btn-xs" type="button" data-toggle="collapse" data-target="#guideCollapse" aria-expanded="false" aria-controls="guideCollapse">
+                        <i class="fa fa-question-circle"></i> {% trans "Integration Guide" %}
+                    </button>
+                </div>
+                <h3 class="panel-title">
+                    <i class="fa fa-sliders"></i> {% trans "VEditor Connection & Studio" %}
+                </h3>
             </div>
-            <div class="veditor-card-body">
-                {% if veditor_configured %}
-                    <div class="veditor-status-row">
-                        <div>
-                            <strong><i class="fa fa-globe"></i> {% trans "Service Endpoint" %}:</strong>
-                            <code class="veditor-code-endpoint">{{ veditor_base_url }}</code>
-                            <div class="text-muted veditor-status-subtext">
-                                <i class="fa fa-check text-success"></i> {% trans "Event automatically resolved via your event-scoped API key." %}
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="collapse{% if form.errors %} in{% endif %}" id="settingsCollapse">
-                        <div class="panel panel-default veditor-settings-panel">
-                            <div class="panel-body">
-                                <h4 class="veditor-settings-title">{% trans "Update VEditor Credentials" %}</h4>
-                                <form method="post" action="">
-                                    {% csrf_token %}
-                                    <input type="hidden" name="action" value="save_settings">
-                                    <div class="form-group {% if form.veditor_api_key.errors %}has-error{% endif %}">
-                                        <label for="{{ form.veditor_api_key.id_for_label }}">{{ form.veditor_api_key.label }}</label>
-                                        {{ form.veditor_api_key }}
-                                        {% if form.veditor_api_key.help_text %}
-                                            <span class="help-block">{{ form.veditor_api_key.help_text }}</span>
-                                        {% endif %}
-                                        {% for error in form.veditor_api_key.errors %}
-                                            <span class="help-block text-danger">{{ error }}</span>
-                                        {% endfor %}
-                                    </div>
-                                    <div class="form-group {% if form.veditor_api_base_url.errors %}has-error{% endif %}">
-                                        <label for="{{ form.veditor_api_base_url.id_for_label }}">{{ form.veditor_api_base_url.label }}</label>
-                                        {{ form.veditor_api_base_url }}
-                                        {% if form.veditor_api_base_url.help_text %}
-                                            <span class="help-block">{{ form.veditor_api_base_url.help_text }}</span>
-                                        {% endif %}
-                                        {% for error in form.veditor_api_base_url.errors %}
-                                            <span class="help-block text-danger">{{ error }}</span>
-                                        {% endfor %}
-                                    </div>
-                                    <button type="submit" class="btn btn-primary" id="btn-save-settings">
-                                        <i class="fa fa-save"></i> {% trans "Update Settings" %}
-                                    </button>
-                                </form>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="well veditor-well">
-                        <h4 class="veditor-well-title">
-                            <i class="fa fa-refresh"></i> {% trans "Synchronize Schedule & Open Studio" %}
-                        </h4>
-                        <p class="veditor-well-desc">
-                            {% if talks_count %}
-                                {% blocktrans trimmed with count=talks_count %}
-                                There are <strong>{{ count }}</strong> scheduled talk(s) ready to synchronize into VEditor.
-                                {% endblocktrans %}
-                            {% else %}
-                                {% trans "No scheduled talks found for this event yet. You can still open the VEditor Studio directly." %}
-                            {% endif %}
-                        </p>
-
-                        <form method="post" action="" class="veditor-action-form">
+            <div class="panel-body">
+                <!-- Collapsible Settings Panel -->
+                <div class="collapse{% if form.errors %} in{% endif %}" id="settingsCollapse">
+                    <div class="well veditor-subwell">
+                        <h4>{% trans "Update VEditor Credentials" %}</h4>
+                        <form method="post" action="">
                             {% csrf_token %}
-                            {% if talks_count %}
-                                <button type="submit" name="action" value="sync_and_launch" class="btn btn-primary btn-lg" id="btn-launch-veditor">
-                                    <i class="fa fa-refresh"></i> {% trans "Sync Talks & Launch VEditor" %}
-                                </button>
-                                <button type="submit" name="action" value="open_studio" class="btn btn-default btn-lg" id="btn-open-studio-only">
-                                    <i class="fa fa-external-link"></i> {% trans "Open Studio without Sync" %}
-                                </button>
-                            {% else %}
-                                <button type="submit" name="action" value="open_studio" class="btn btn-primary btn-lg" id="btn-launch-veditor">
-                                    <i class="fa fa-external-link"></i> {% trans "Launch VEditor Studio" %}
-                                </button>
-                            {% endif %}
+                            <input type="hidden" name="action" value="save_settings">
+                            <div class="form-group {% if form.veditor_api_key.errors %}has-error{% endif %}">
+                                <label for="{{ form.veditor_api_key.id_for_label }}">{{ form.veditor_api_key.label }}</label>
+                                {{ form.veditor_api_key }}
+                                {% if form.veditor_api_key.help_text %}
+                                    <span class="help-block">{{ form.veditor_api_key.help_text }}</span>
+                                {% endif %}
+                                {% for error in form.veditor_api_key.errors %}
+                                    <span class="help-block text-danger">{{ error }}</span>
+                                {% endfor %}
+                            </div>
+                            <div class="form-group {% if form.veditor_api_base_url.errors %}has-error{% endif %}">
+                                <label for="{{ form.veditor_api_base_url.id_for_label }}">{{ form.veditor_api_base_url.label }}</label>
+                                {{ form.veditor_api_base_url }}
+                                {% if form.veditor_api_base_url.help_text %}
+                                    <span class="help-block">{{ form.veditor_api_base_url.help_text }}</span>
+                                {% endif %}
+                                {% for error in form.veditor_api_base_url.errors %}
+                                    <span class="help-block text-danger">{{ error }}</span>
+                                {% endfor %}
+                            </div>
+                            <button type="submit" class="btn btn-primary" id="btn-save-settings">
+                                <i class="fa fa-save"></i> {% trans "Update Settings" %}
+                            </button>
                         </form>
                     </div>
-                {% else %}
-                    <div class="veditor-callout">
-                        <i class="fa fa-info-circle"></i>
-                        {% trans "API keys in VEditor are event-scoped. Simply generate an API key in VEditor for this event and paste it below. No manual Event ID configuration is needed." %}
-                    </div>
+                </div>
 
-                    <form method="post" action="">
+                <!-- Collapsible Guide Panel -->
+                <div class="collapse" id="guideCollapse">
+                    <div class="well veditor-subwell">
+                        <h4><i class="fa fa-info-circle text-info"></i> {% trans "Integration & Workflow Guide" %}</h4>
+                        <ol class="veditor-guide-steps">
+                            <li>
+                                <strong>{% trans "Event-Scoped Connection:" %}</strong>
+                                <p class="text-muted">{% trans "Your event API key establishes a direct, secure integration with VEditor. Scheduled talks and rooms are synchronized seamlessly." %}</p>
+                            </li>
+                            <li>
+                                <strong>{% trans "Schedule Synchronization:" %}</strong>
+                                <p class="text-muted">{% trans "Click 'Sync Schedule & Launch Studio' to push confirmed talks and speaker details to VEditor before trimming." %}</p>
+                            </li>
+                            <li>
+                                <strong>{% trans "Video Ingestion & Trimming:" %}</strong>
+                                <p class="text-muted">{% trans "Attach raw room recordings or individual session footage to cut talk boundaries, generate title cards, and transcode broadcast masters." %}</p>
+                            </li>
+                        </ol>
+                    </div>
+                </div>
+
+                <!-- Connection Status & Launch Controls -->
+                <div class="veditor-connection-bar">
+                    <div class="veditor-connection-meta">
+                        <span class="text-muted">{% trans "Service Endpoint" %}:</span>
+                        <code class="veditor-endpoint-code">{{ veditor_base_url }}</code>
+                        <span class="label label-success veditor-label-connected">
+                            <i class="fa fa-check"></i> {% trans "Connected" %}
+                        </span>
+                    </div>
+                    <div class="veditor-schedule-summary">
+                        {% if talks_count %}
+                            {% blocktrans trimmed count count=talks_count %}
+                            <strong>{{ count }}</strong> scheduled session ready to sync.
+                            {% plural %}
+                            <strong>{{ count }}</strong> scheduled sessions ready to sync.
+                            {% endblocktrans %}
+                        {% else %}
+                            {% trans "No scheduled sessions found for this event yet." %}
+                        {% endif %}
+                    </div>
+                </div>
+
+                <div class="veditor-launch-actions">
+                    <form method="post" action="" class="veditor-action-form">
                         {% csrf_token %}
-                        <input type="hidden" name="action" value="save_settings">
-                        <div class="form-group {% if form.veditor_api_key.errors %}has-error{% endif %}">
-                            <label for="{{ form.veditor_api_key.id_for_label }}">{{ form.veditor_api_key.label }} <span class="text-danger">*</span></label>
-                            {{ form.veditor_api_key }}
-                            {% if form.veditor_api_key.help_text %}
-                                <span class="help-block">{{ form.veditor_api_key.help_text }}</span>
-                            {% endif %}
-                            {% for error in form.veditor_api_key.errors %}
-                                <span class="help-block text-danger">{{ error }}</span>
-                            {% endfor %}
-                        </div>
-                        <div class="form-group {% if form.veditor_api_base_url.errors %}has-error{% endif %}">
-                            <label for="{{ form.veditor_api_base_url.id_for_label }}">{{ form.veditor_api_base_url.label }}</label>
-                            {{ form.veditor_api_base_url }}
-                            {% if form.veditor_api_base_url.help_text %}
-                                <span class="help-block">{{ form.veditor_api_base_url.help_text }}</span>
-                            {% endif %}
-                            {% for error in form.veditor_api_base_url.errors %}
-                                <span class="help-block text-danger">{{ error }}</span>
-                            {% endfor %}
-                        </div>
-                        <button type="submit" class="btn btn-success btn-lg" id="btn-save-settings">
-                            <i class="fa fa-check"></i> {% trans "Connect VEditor" %}
-                        </button>
+                        {% if talks_count %}
+                            <button type="submit" name="action" value="sync_and_launch" class="btn btn-primary" id="btn-launch-veditor">
+                                <i class="fa fa-refresh"></i> {% trans "Sync Schedule & Launch Studio" %}
+                            </button>
+                            <button type="submit" name="action" value="open_studio" class="btn btn-default" id="btn-open-studio-only">
+                                <i class="fa fa-external-link"></i> {% trans "Launch Studio" %}
+                            </button>
+                        {% else %}
+                            <button type="submit" name="action" value="open_studio" class="btn btn-primary" id="btn-launch-veditor">
+                                <i class="fa fa-external-link"></i> {% trans "Launch Studio" %}
+                            </button>
+                        {% endif %}
                     </form>
-                {% endif %}
+                </div>
             </div>
         </div>
 
         {% if talks %}
-        <div class="veditor-card">
-            <div class="veditor-card-header">
-                <h3 class="veditor-card-title">
-                    <i class="fa fa-list"></i> {% trans "Talks Ready for Synchronization" %} ({{ talks_count }})
+        <!-- Scheduled Talks Table (Full Width 12-Columns) -->
+        <div class="panel panel-default veditor-panel">
+            <div class="panel-heading">
+                <h3 class="panel-title">
+                    <i class="fa fa-list"></i> {% trans "Scheduled Sessions" %} ({{ talks_count }})
                 </h3>
             </div>
             <div class="table-responsive">
@@ -174,17 +229,21 @@
                     <thead>
                         <tr>
                             <th class="veditor-col-code">{% trans "Code" %}</th>
-                            <th class="veditor-col-title">{% trans "Title" %}</th>
+                            <th class="veditor-col-title">{% trans "Session Title" %}</th>
                             <th class="veditor-col-room">{% trans "Room" %}</th>
                             <th class="veditor-col-start">{% trans "Start Time (UTC)" %}</th>
-                            <th class="veditor-col-action">{% trans "Speaker Review" %}</th>
+                            <th class="veditor-col-status">{% trans "Video Status" %}</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for slot in talks %}
                         <tr>
-                            <td><code>{{ slot.submission.code|default:slot.id }}</code></td>
-                            <td><strong>{{ slot.submission.title|default:slot.description }}</strong></td>
+                            <td>
+                                <span class="veditor-session-code">{{ slot.submission.code|default:slot.id }}</span>
+                            </td>
+                            <td>
+                                <strong>{{ slot.submission.title|default:slot.description }}</strong>
+                            </td>
                             <td>{{ slot.room.name|default:"—" }}</td>
                             <td>
                                 {% if slot.start %}
@@ -193,16 +252,34 @@
                                     —
                                 {% endif %}
                             </td>
-                            <td class="text-right">
-                                <form method="post" action="" class="veditor-table-action-form">
-                                    {% csrf_token %}
-                                    <input type="hidden" name="action" value="resend_speaker_link">
-                                    <input type="hidden" name="talk_id" value="{{ slot.submission.code|default:slot.id }}">
-                                    <input type="hidden" name="external_id" value="{{ slot.submission.code|default:slot.id }}">
-                                    <button type="submit" class="btn btn-default btn-xs" title="{% trans 'Dispatch single sign-on review link to confirmed talk speakers' %}">
-                                        <i class="fa fa-envelope-o"></i> {% trans "Send Email" %}
-                                    </button>
-                                </form>
+                            <td>
+                                <div class="veditor-status-cell">
+                                    {% if slot.submission.recording_url %}
+                                        <span class="label label-success">
+                                             <i class="fa fa-check"></i> {% trans "Published" %}
+                                        </span>
+                                    {% elif slot.submission.do_not_record %}
+                                        <span class="label label-default">
+                                            {% trans "Do Not Record" %}
+                                        </span>
+                                    {% else %}
+                                        <span class="label label-default">
+                                            <i class="fa fa-clock-o"></i> {% trans "Waiting for Recording" %}
+                                        </span>
+                                    {% endif %}
+
+                                    {% if slot.submission.speakers.exists %}
+                                        <form method="post" action="" class="veditor-table-action-form">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="action" value="resend_speaker_link">
+                                            <input type="hidden" name="talk_id" value="{{ slot.submission.code|default:slot.id }}">
+                                            <input type="hidden" name="external_id" value="{{ slot.submission.code|default:slot.id }}">
+                                            <button type="submit" class="btn btn-default btn-xs" title="{% trans 'Dispatch single sign-on review link to confirmed talk speakers' %}">
+                                                <i class="fa fa-envelope-o"></i> {% trans "Send Review Link" %}
+                                            </button>
+                                        </form>
+                                    {% endif %}
+                                </div>
                             </td>
                         </tr>
                         {% endfor %}
@@ -212,32 +289,6 @@
         </div>
         {% endif %}
     </div>
-
-    <div class="col-xs-12 col-md-4">
-        <div class="veditor-card">
-            <div class="veditor-card-header">
-                <h3 class="veditor-card-title">
-                    <i class="fa fa-info-circle text-primary"></i> {% trans "Integration Guide" %}
-                </h3>
-            </div>
-            <div class="veditor-card-body veditor-guide-body">
-                <p><strong>{% trans "1. Generate an Event-Scoped API Key:" %}</strong></p>
-                <ol class="veditor-guide-list">
-                    <li>{% blocktrans trimmed %}Log in to your VEditor instance and open <strong>Events</strong>.{% endblocktrans %}</li>
-                    <li>{% blocktrans trimmed %}Click <strong>API Keys</strong> on your target event to generate an API key.{% endblocktrans %}</li>
-                    <li>{% blocktrans trimmed %}Paste the API key into this form and save.{% endblocktrans %}</li>
-                </ol>
-                <p><strong>{% trans "2. Zero-Config Target Event:" %}</strong></p>
-                <p class="text-muted veditor-guide-text">
-                    {% trans "Because the API key is scoped to your event in VEditor, Eventyay automatically resolves the corresponding event without requiring manual Event ID registration." %}
-                </p>
-                <p><strong>{% trans "3. Synchronize & Launch:" %}</strong></p>
-                <ol class="veditor-guide-list-last">
-                    <li>{% trans "Click 'Sync Talks & Launch VEditor' to publish schedule changes." %}</li>
-                    <li>{% trans "A secure single sign-on token authenticates your organizer session automatically." %}</li>
-                </ol>
-            </div>
-        </div>
-    </div>
 </div>
+{% endif %}
 {% endblock %}

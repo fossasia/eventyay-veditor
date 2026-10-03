@@ -22,27 +22,34 @@ def setup_request(request):
     middleware.process_request(request)
     request.session.save()
     request._messages = FallbackStorage(request)
+    request.LANGUAGE_CODE = "en"
     return request
 
 
 class MockEventSettings:
     def __init__(self, data=None):
         self.data = data or {}
+        self.locales = self.data.get("locales", ["en"])
+        self.presale_css_file = None
 
-    def get(self, key, default=None):
+    def get(self, key, default=None, *args, **kwargs):
         return self.data.get(key, default)
 
     def set(self, key, value):
         self.data[key] = value
 
+    def __getattr__(self, item):
+        return self.data.get(item, None)
+
 
 @pytest.fixture
 def event():
     """Mock event fixture avoiding database connections in CI."""
-    organizer = SimpleNamespace(slug="test-org")
+    organizer = SimpleNamespace(id=1, pk=1, slug="test-org", settings=MockEventSettings({"locales": ["en"]}))
     schedule = SimpleNamespace(scheduled_talks=[])
     return SimpleNamespace(
         id=42,
+        pk=42,
         slug="test-conf",
         name="Test Conference 2026",
         organizer=organizer,
@@ -50,6 +57,11 @@ def event():
         current_schedule=schedule,
         wip_schedule=None,
         get_talk_slots=lambda: [],
+        talks_published=False,
+        testmode=False,
+        live=True,
+        orders=SimpleNamespace(filter=lambda **kw: SimpleNamespace(exists=lambda: False)),
+        cache=SimpleNamespace(get=lambda k, default=None: False if k == "complain_testmode_orders" else default, get_or_set=lambda k, val, ttl=None: val),
     )
 
 
@@ -505,3 +517,62 @@ def test_signals_nav_registration():
 
     assert "veditor_nav_event" not in tickets_uids
     assert "veditor_nav_event_common" in common_uids
+
+
+def test_connect_view_rendered_ui_unconfigured(event, organizer_user, rf):
+    """Verify template and view context in unconfigured state match Eventyay design tokens."""
+    request = setup_request(rf.get(reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug})))
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    view = ConnectView.as_view()
+    response = view(request, organizer=event.organizer.slug, event=event.slug)
+
+    assert response.status_code == 200
+    assert response.template_name == ["veditor/connect.html"]
+    assert response.context_data["veditor_configured"] is False
+
+    from django.template.loader import get_template
+
+    template = get_template("veditor/connect.html")
+    source = template.template.source
+
+    assert "Video Editor (VEditor)" in source
+    assert "Not Configured" in source
+    assert "Setup & Integration Guide" in source
+    assert "veditor-dashboard-hero" not in source
+    assert "Open Studio without Sync" not in source
+    assert "Zero-Config Target Event" not in source
+
+
+def test_connect_view_rendered_ui_configured(event, organizer_user, rf):
+    """Verify template and view context in configured state use clean action buttons and full-width layout."""
+    event.settings.set("veditor_api_key", "test-secret-key")
+    event.settings.set("veditor_api_base_url", "https://editor.example.com")
+
+    request = setup_request(rf.get(reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug})))
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    view = ConnectView.as_view()
+    response = view(request, organizer=event.organizer.slug, event=event.slug)
+
+    assert response.status_code == 200
+    assert response.template_name == ["veditor/connect.html"]
+    assert response.context_data["veditor_configured"] is True
+
+    from django.template.loader import get_template
+
+    template = get_template("veditor/connect.html")
+    source = template.template.source
+
+    assert "Video Editor (VEditor)" in source
+    assert "Connected" in source
+    assert "VEditor Connection & Studio" in source
+    assert "Sync Schedule & Launch Studio" in source
+    assert "Launch Studio" in source
+    assert "veditor-dashboard-hero" not in source
+    assert "Open Studio without Sync" not in source
+    assert "Zero-Config Target Event" not in source
