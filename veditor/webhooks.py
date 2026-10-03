@@ -189,7 +189,7 @@ class WebhookView(View):
         if event_type == "ping":
             return JsonResponse({"status": "pong", "message": "Webhook verified"}, status=200)
 
-        if event_type not in ("talk.approved", "talk.published"):
+        if event_type not in ("talk.approved", "talk.bounds_pending", "talk.published"):
             return JsonResponse({"error": f"Unsupported webhook event type: {event_type}"}, status=400)
 
         talk_id = payload.get("talk_id")

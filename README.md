@@ -67,8 +67,10 @@ The plugin exposes an inbound webhook receiver to receive pipeline lifecycle eve
 
 ### Supported Webhook Events
 
+- `talk.bounds_pending`:
+  Dispatched when candidate talk cut points are ready for review. Triggers background email delivery of direct SSO review links to the talk's registered speakers.
 - `talk.approved`:
-  Dispatched when a talk recording is ready for speaker review. Triggers background email delivery of direct SSO review links to the talk's registered speakers.
+  Dispatched when a talk recording review is approved or finalized. Triggers background email delivery of direct SSO review links to the talk's registered speakers.
 - `talk.published`:
   Dispatched when video processing is finalized and published. Idempotently attaches the recording URL to the talk's resources, updating the public schedule player without creating duplicate resource entries.
 - `ping`:

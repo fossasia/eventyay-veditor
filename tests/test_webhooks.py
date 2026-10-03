@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from django.test import RequestFactory
 from django.urls import reverse
+from django.utils import timezone
 
 from veditor.tasks import process_talk_approved, process_talk_published
 from veditor.webhooks import WebhookView, parse_timestamp, verify_hmac_signature
@@ -1284,3 +1285,38 @@ def test_tasks_process_talk_published_idempotent_public_schedule_updates():
         # Public schedule now renders updated recording URL
         rec3 = provider.get_recording(mock_sub)
         assert "recording_v2.mp4" in rec3["iframe"]
+
+
+def test_webhook_view_post_bounds_pending_enqueues_celery_task(rf, webhook_secret):
+    payload = {
+        "event": "talk.bounds_pending",
+        "talk_id": 202,
+        "event_id": 42,
+        "external_id": "TALK-XYZ",
+        "timestamp": timezone.now().isoformat(),
+    }
+    body = json.dumps(payload).encode("utf-8")
+    sig = generate_signature(webhook_secret, body)
+
+    request = rf.post(
+        reverse("plugins:veditor:webhook"),
+        data=body,
+        content_type="application/json",
+        HTTP_X_VEDITOR_SIGNATURE=sig,
+    )
+
+    with patch("veditor.webhooks.settings") as mock_settings, patch("veditor.webhooks.process_talk_approved") as mock_task:
+        mock_settings.VEDITOR_WEBHOOK_SECRET = webhook_secret
+
+        view = WebhookView.as_view()
+        response = view(request)
+
+        assert response.status_code == 200
+        data = json.loads(response.content.decode("utf-8"))
+        assert data["status"] == "accepted"
+        mock_task.delay.assert_called_once_with(
+            event_id=42,
+            talk_id=202,
+            external_id="TALK-XYZ",
+            raw_payload=payload,
+        )
