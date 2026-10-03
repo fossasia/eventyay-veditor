@@ -37,7 +37,7 @@ def test_recording_provider_direct_video_mp4():
     event = MagicMock()
     provider = VEditorRecordingProvider(event)
 
-    submission = MagicMock()
+    submission = MagicMock(spec=["do_not_record", "recording_url"])
     submission.do_not_record = False
     submission.recording_url = "https://cdn.example.com/videos/talk1.mp4"
 
@@ -53,7 +53,7 @@ def test_recording_provider_direct_video_webm():
     event = MagicMock()
     provider = VEditorRecordingProvider(event)
 
-    submission = MagicMock()
+    submission = MagicMock(spec=["do_not_record", "recording_url"])
     submission.do_not_record = False
     submission.recording_url = "https://cdn.example.com/videos/talk1.webm?token=abc"
 
@@ -66,7 +66,7 @@ def test_recording_provider_iframe_embed():
     event = MagicMock()
     provider = VEditorRecordingProvider(event)
 
-    submission = MagicMock()
+    submission = MagicMock(spec=["do_not_record", "recording_url"])
     submission.do_not_record = False
     submission.recording_url = "https://studio.veditor.org/embed/42"
 
@@ -97,7 +97,7 @@ def test_recording_provider_html_escaping():
     event = MagicMock()
     provider = VEditorRecordingProvider(event)
 
-    submission = MagicMock()
+    submission = MagicMock(spec=["do_not_record", "recording_url"])
     submission.do_not_record = False
     submission.recording_url = 'https://example.com/video?foo="bar"&baz=<tag>'
 

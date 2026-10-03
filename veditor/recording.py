@@ -29,9 +29,9 @@ class VEditorRecordingProvider(BaseRecordingProvider):
         if getattr(submission, "do_not_record", False):
             return {}
 
-        video_url = getattr(submission, "recording_url", None)
+        video_url = None
 
-        if not video_url and hasattr(submission, "resources"):
+        if hasattr(submission, "resources"):
             try:
                 resource = (
                     submission.resources.filter(
@@ -49,6 +49,9 @@ class VEditorRecordingProvider(BaseRecordingProvider):
                     getattr(submission, "code", None),
                     exc,
                 )
+
+        if not video_url:
+            video_url = getattr(submission, "recording_url", None)
 
         if not video_url:
             return {}

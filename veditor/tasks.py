@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 from django.conf import settings
 from django.core.cache import cache
 from django.core.mail import EmailMultiAlternatives
-from django.db import DatabaseError
+from django.db import DatabaseError, transaction
 from django.template.loader import render_to_string
 
 try:
@@ -493,40 +493,46 @@ def process_talk_published(
                     "submission_code": submission.code,
                 }
 
-            # 4. Update or create Resource safely without MultipleObjectsReturned
-            resource = (
-                Resource.objects.filter(
-                    submission=submission,
-                    description__iexact="Video Recording",
-                )
-                .order_by("id")
-                .first()
-            )
-            created = False
-            if resource:
-                resource.link = video_url
-                resource.kind = "generic"
-                resource.save(update_fields=["link", "kind"])
-            else:
-                resource = Resource.objects.create(
-                    submission=submission,
-                    description="Video Recording",
-                    link=video_url,
-                    kind="generic",
-                )
-                created = True
+            with transaction.atomic():
+                # Lock submission row if persistent to serialize concurrent webhook arrivals
+                if isinstance(getattr(submission, "pk", None), int) and hasattr(Submission.objects, "select_for_update"):
+                    Submission.objects.select_for_update().filter(pk=submission.pk).first()
 
-            # 5. Provide backwards compatibility for recording_url attribute if present
-            if hasattr(submission, "recording_url"):
-                submission.recording_url = video_url
-                try:
-                    submission.save(update_fields=["recording_url"])
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "Failed updating recording_url on submission %s: %s",
-                        getattr(submission, "code", None),
-                        exc,
+                resource = (
+                    Resource.objects.filter(
+                        submission=submission,
+                        description__iexact="Video Recording",
                     )
+                    .order_by("id")
+                    .first()
+                )
+                created = False
+                if resource:
+                    resource.link = video_url
+                    resource.kind = "generic"
+                    resource.save(update_fields=["link", "kind"])
+                else:
+                    resource = Resource.objects.create(
+                        submission=submission,
+                        description="Video Recording",
+                        link=video_url,
+                        kind="generic",
+                    )
+                    created = True
+
+                # 5. Provide backwards compatibility for recording_url attribute if present
+                if hasattr(submission, "recording_url"):
+                    submission.recording_url = video_url
+                    try:
+                        submission.save(update_fields=["recording_url"])
+                    except DatabaseError:
+                        raise
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "Failed updating recording_url on submission %s: %s",
+                            getattr(submission, "code", None),
+                            exc,
+                        )
 
             logger.info(
                 "Successfully synced recording URL for submission %s (Resource ID=%s, created=%s)",

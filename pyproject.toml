@@ -68,7 +68,7 @@ addopts = "--nomigrations"
 
 [tool.pytest_env]
 EVY_RUNNING_ENVIRONMENT = "testing"
-EVY_POSTGRES_HOST = "localhost"
+EVY_POSTGRES_HOST = "127.0.0.1"
 EVY_POSTGRES_PORT = "5432"
 EVY_POSTGRES_USER = "postgres"
 EVY_POSTGRES_PASSWORD = "postgres"

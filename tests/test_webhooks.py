@@ -902,6 +902,7 @@ def test_tasks_process_talk_published_success_via_external_id():
     mock_resource.id = 555
 
     with (
+        patch("django.db.transaction.atomic"),
         patch("eventyay.base.models.Event.objects.filter") as mock_event_filter,
         patch("eventyay.base.models.Resource.objects.filter") as mock_res_filter,
     ):
@@ -937,6 +938,7 @@ def test_tasks_process_talk_published_creates_resource_when_none_exists():
     mock_new_resource.id = 777
 
     with (
+        patch("django.db.transaction.atomic"),
         patch("eventyay.base.models.Event.objects.filter") as mock_event_filter,
         patch("eventyay.base.models.Resource.objects.filter") as mock_res_filter,
         patch("eventyay.base.models.Resource.objects.create", return_value=mock_new_resource) as mock_res_create,
@@ -1174,6 +1176,7 @@ def test_tasks_process_talk_published_duplicate_events_query():
     mock_res.id = 101
 
     with (
+        patch("django.db.transaction.atomic"),
         patch("eventyay.base.models.Event.objects.filter") as mock_event_filter,
         patch("eventyay.base.models.Resource.objects.filter") as mock_res_filter,
     ):
@@ -1221,6 +1224,7 @@ def test_tasks_process_talk_published_idempotent_public_schedule_updates():
     def mock_filter_res(*args, **kwargs):
         mock_qs = MagicMock()
         matched = [r for r in existing_resources if r.description.lower() == "video recording"]
+        mock_qs.first.side_effect = lambda: matched[0] if matched else None
         mock_qs.order_by.return_value.first.side_effect = lambda: matched[0] if matched else None
         return mock_qs
 
@@ -1230,8 +1234,10 @@ def test_tasks_process_talk_published_idempotent_public_schedule_updates():
         return new_res
 
     mock_event.submissions.filter.return_value.first.return_value = mock_sub
+    mock_sub.resources.filter.side_effect = mock_filter_res
 
     with (
+        patch("django.db.transaction.atomic"),
         patch("eventyay.base.models.Event.objects.filter") as mock_event_filter,
         patch("eventyay.base.models.Resource.objects.filter", side_effect=mock_filter_res),
         patch("eventyay.base.models.Resource.objects.create", side_effect=mock_create_res),

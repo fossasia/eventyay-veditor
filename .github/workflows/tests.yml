@@ -63,15 +63,19 @@ jobs:
           cd ../eventyay/app
           uv sync --all-extras --all-groups
           uv pip install -e ../../eventyay-veditor
+      - name: Initialize PostgreSQL extensions
+        run: |
+          PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d template1 -c "CREATE EXTENSION IF NOT EXISTS pg_trgm; CREATE EXTENSION IF NOT EXISTS unaccent;"
+          PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d eventyay-db -c "CREATE EXTENSION IF NOT EXISTS pg_trgm; CREATE EXTENSION IF NOT EXISTS unaccent;"
 
       - name: Run tests
         env:
           EVY_RUNNING_ENVIRONMENT: testing
-          EVY_POSTGRES_HOST: localhost
+          EVY_POSTGRES_HOST: 127.0.0.1
           EVY_POSTGRES_PORT: 5432
           EVY_POSTGRES_USER: postgres
           EVY_POSTGRES_PASSWORD: postgres
           EVY_POSTGRES_DB: eventyay-db
         run: |
           . ../eventyay/app/.venv/bin/activate
-          pytest tests --reruns 3
+          pytest tests
