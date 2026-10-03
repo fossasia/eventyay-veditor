@@ -43,11 +43,14 @@ def test_to_utc_isoformat_aware_conversion():
 
 def test_serialize_talk_with_orm_like_objects():
     event = SimpleNamespace(slug="fossasia-summit-2026", id=101)
+    speaker = SimpleNamespace(email="keynote@example.org", name="Alice Vance")
+    speakers_manager = SimpleNamespace(all=lambda: [speaker])
     submission = SimpleNamespace(
         id=42,
         code="TALK-42",
         title="Opening Keynote",
         event=event,
+        speakers=speakers_manager,
     )
     room = SimpleNamespace(name="Main Hall")
     start = datetime(2026, 9, 12, 9, 0, 0, tzinfo=UTC)
@@ -68,6 +71,7 @@ def test_serialize_talk_with_orm_like_objects():
     assert data["start"] == "2026-09-12T09:00:00+00:00"
     assert data["end"] == "2026-09-12T10:00:00+00:00"
     assert data["event_id"] == 101
+    assert data["speaker_email"] == "keynote@example.org"
 
 
 def test_serialize_talk_with_dict_and_fallback():
@@ -78,12 +82,68 @@ def test_serialize_talk_with_dict_and_fallback():
         "start": "2026-09-12T11:00:00+00:00",
         "end": "2026-09-12T11:15:00+00:00",
         "event_id": "test-conf",
+        "speaker_email": "lightning@example.org",
     }
     data = serialize_talk(dict_talk)
     assert data["external_id"] == "SUB-99"
     assert data["title"] == "Lightning Talk"
     assert data["room"] == "Room B"
     assert data["event_id"] == "test-conf"
+    assert data["speaker_email"] == "lightning@example.org"
+
+
+def test_serialize_talk_with_speaker_email_variations():
+    # 1. Speakers as plain list
+    sp = SimpleNamespace(email="list_speaker@example.org")
+    sub1 = SimpleNamespace(id=1, code="T1", title="Talk 1", speakers=[sp])
+    slot1 = SimpleNamespace(id=1, submission=sub1)
+    assert serialize_talk(slot1)["speaker_email"] == "list_speaker@example.org"
+
+    # 2. No speakers
+    sub2 = SimpleNamespace(id=2, code="T2", title="Talk 2", speakers=[])
+    slot2 = SimpleNamespace(id=2, submission=sub2)
+    assert serialize_talk(slot2)["speaker_email"] is None
+
+    # 3. Submission without speakers attribute
+    sub3 = SimpleNamespace(id=3, code="T3", title="Talk 3")
+    slot3 = SimpleNamespace(id=3, submission=sub3)
+    assert serialize_talk(slot3)["speaker_email"] is None
+
+    # 4. Multi-speaker where first speaker has empty email and second has valid email
+    sp_empty = SimpleNamespace(email="")
+    sp_valid = SimpleNamespace(email="second_speaker@example.org")
+    sub4 = SimpleNamespace(id=4, code="T4", title="Talk 4", speakers=[sp_empty, sp_valid])
+    slot4 = SimpleNamespace(id=4, submission=sub4)
+    assert serialize_talk(slot4)["speaker_email"] == "second_speaker@example.org"
+
+    # 5. Nested dictionary submission with speaker dictionaries and uppercase/untrimmed whitespace
+    sub5 = {
+        "title": "Talk 5",
+        "speakers": [
+            {"name": "Alice", "email": "   "},
+            {"name": "Bob", "email": "  BOB.Speaker@Example.ORG  "},
+        ],
+    }
+    slot5 = {"id": 5, "submission": sub5}
+    assert serialize_talk(slot5)["speaker_email"] == "bob.speaker@example.org"
+
+    # 6. Object submission with speakers as a set and uppercase email
+    class HashableSpeaker:
+        def __init__(self, email):
+            self.email = email
+
+    sp_set = HashableSpeaker(email="  SPEAKER_SET@Domain.COM  ")
+    sub6 = SimpleNamespace(id=6, code="T6", title="Talk 6", speakers={sp_set})
+    slot6 = SimpleNamespace(id=6, submission=sub6)
+    assert serialize_talk(slot6)["speaker_email"] == "speaker_set@domain.com"
+
+    # 7. Fallback top-level speaker_email in dictionary slot with untrimmed uppercase email
+    slot7 = {
+        "external_id": "SUB-7",
+        "title": "Talk 7",
+        "speaker_email": "  Fallback.Speaker@Example.NET  ",
+    }
+    assert serialize_talk(slot7)["speaker_email"] == "fallback.speaker@example.net"
 
 
 def test_serialize_talks_list():
