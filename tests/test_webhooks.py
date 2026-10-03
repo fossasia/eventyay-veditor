@@ -1284,3 +1284,193 @@ def test_tasks_process_talk_published_idempotent_public_schedule_updates():
         # Public schedule now renders updated recording URL
         rec3 = provider.get_recording(mock_sub)
         assert "recording_v2.mp4" in rec3["iframe"]
+
+
+def test_webhook_view_talk_published_relative_url_resolves_with_event_base_url(rf, webhook_secret):
+    payload = {
+        "event": "talk.published",
+        "talk_id": 42,
+        "event_id": 10,
+        "external_id": "ABCDE",
+        "video_url": "/studio/media/42/final/master.mp4",
+        "timestamp": time.time(),
+    }
+    body = json.dumps(payload).encode("utf-8")
+    sig = generate_signature(webhook_secret, body)
+
+    request = rf.post(
+        reverse("plugins:veditor:webhook"),
+        data=body,
+        content_type="application/json",
+        HTTP_X_VEDITOR_SIGNATURE=sig,
+    )
+
+    mock_event = MagicMock()
+    mock_event.id = 10
+    mock_event.settings = {
+        "veditor_webhook_secret": webhook_secret,
+        "veditor_api_base_url": "https://veditor.eventyay.com",
+    }
+
+    with (
+        patch("veditor.webhooks.settings") as mock_settings,
+        patch("veditor.client.settings") as mock_client_settings,
+        patch("eventyay.base.models.Event.objects.filter") as mock_event_filter,
+        patch("veditor.webhooks.process_talk_published") as mock_task,
+    ):
+        mock_settings.VEDITOR_WEBHOOK_SECRET = webhook_secret
+        mock_client_settings.configured = True
+        mock_client_settings.VEDITOR_API_BASE_URL = None
+        mock_client_settings.VEDITOR_BASE_URL = None
+        mock_event_filter.return_value.first.return_value = mock_event
+
+        view = WebhookView.as_view()
+        response = view(request)
+
+        assert response.status_code == 200, response.content.decode("utf-8")
+        assert mock_task.delay.called
+        mock_task.delay.assert_called_once_with(
+            event_id=10,
+            talk_id=42,
+            video_url="https://veditor.eventyay.com/studio/media/42/final/master.mp4",
+            external_id="ABCDE",
+            raw_payload=payload,
+        )
+
+
+def test_webhook_view_talk_published_relative_url_resolves_with_global_base_url(rf, webhook_secret):
+    payload = {
+        "event": "talk.published",
+        "talk_id": 42,
+        "event_id": 10,
+        "external_id": "ABCDE",
+        "video_url": "/studio/media/42/final/master.mp4",
+        "timestamp": time.time(),
+    }
+    body = json.dumps(payload).encode("utf-8")
+    sig = generate_signature(webhook_secret, body)
+
+    request = rf.post(
+        reverse("plugins:veditor:webhook"),
+        data=body,
+        content_type="application/json",
+        HTTP_X_VEDITOR_SIGNATURE=sig,
+    )
+
+    with (
+        patch("veditor.webhooks.settings") as mock_settings,
+        patch("veditor.client.settings") as mock_client_settings,
+        patch("veditor.webhooks.process_talk_published") as mock_task,
+    ):
+        mock_settings.configured = True
+        mock_settings.VEDITOR_WEBHOOK_SECRET = webhook_secret
+        mock_settings.VEDITOR_API_BASE_URL = "https://default.example.com"
+        mock_settings.VEDITOR_BASE_URL = None
+        mock_settings.VEDITOR_REQUEST_TIMEOUT = 10.0
+        mock_settings.VEDITOR_ALLOWED_ORIGINS = None
+        mock_client_settings.configured = True
+        mock_client_settings.VEDITOR_API_BASE_URL = "https://default.example.com"
+        mock_client_settings.VEDITOR_BASE_URL = None
+
+        view = WebhookView.as_view()
+        response = view(request)
+
+        assert response.status_code == 200
+        assert mock_task.delay.called
+        mock_task.delay.assert_called_once_with(
+            event_id=10,
+            talk_id=42,
+            video_url="https://default.example.com/studio/media/42/final/master.mp4",
+            external_id="ABCDE",
+            raw_payload=payload,
+        )
+
+
+def test_webhook_view_talk_published_relative_url_without_base_url_fails(rf, webhook_secret):
+    payload = {
+        "event": "talk.published",
+        "talk_id": 42,
+        "event_id": 10,
+        "external_id": "ABCDE",
+        "video_url": "/studio/media/42/final/master.mp4",
+        "timestamp": time.time(),
+    }
+    body = json.dumps(payload).encode("utf-8")
+    sig = generate_signature(webhook_secret, body)
+
+    request = rf.post(
+        reverse("plugins:veditor:webhook"),
+        data=body,
+        content_type="application/json",
+        HTTP_X_VEDITOR_SIGNATURE=sig,
+    )
+
+    with (
+        patch("veditor.webhooks.settings") as mock_settings,
+        patch("veditor.client.settings") as mock_client_settings,
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        mock_settings.configured = True
+        mock_settings.VEDITOR_WEBHOOK_SECRET = webhook_secret
+        mock_settings.VEDITOR_API_BASE_URL = None
+        mock_settings.VEDITOR_BASE_URL = None
+        mock_client_settings.configured = True
+        mock_client_settings.VEDITOR_API_BASE_URL = None
+        mock_client_settings.VEDITOR_BASE_URL = None
+
+        view = WebhookView.as_view()
+        response = view(request)
+
+        assert response.status_code == 400
+        data = json.loads(response.content.decode("utf-8"))
+        assert "video_url must be a valid HTTP or HTTPS URL" in data["error"]
+
+
+def test_tasks_process_talk_published_relative_url_resolved_in_task():
+    mock_event = MagicMock()
+    mock_event.id = 1
+    mock_event.slug = "test-event"
+    mock_event.settings = {"veditor_api_base_url": "https://veditor.eventyay.com"}
+
+    mock_sub = MagicMock()
+    mock_sub.id = 100
+    mock_sub.code = "REL123"
+    mock_sub.event = mock_event
+    mock_sub.event_id = 1
+    mock_sub.do_not_record = False
+    mock_sub.pk = 100
+
+    created_resource = []
+
+    def mock_create(*args, **kwargs):
+        res = SimpleNamespace(id=999, link=kwargs["link"], kind=kwargs["kind"])
+        created_resource.append(res)
+        return res
+
+    mock_event.submissions.filter.return_value.first.return_value = mock_sub
+
+    with (
+        patch("veditor.client.settings") as mock_client_settings,
+        patch.dict("os.environ", {}, clear=True),
+        patch("eventyay.base.models.Event.objects.filter") as mock_event_filter,
+        patch("eventyay.base.models.Resource.objects.filter") as mock_res_filter,
+        patch("eventyay.base.models.Resource.objects.create", side_effect=mock_create),
+        patch("eventyay.base.models.Submission.objects.select_for_update"),
+    ):
+        mock_client_settings.configured = True
+        mock_client_settings.VEDITOR_API_BASE_URL = None
+        mock_client_settings.VEDITOR_BASE_URL = None
+        mock_event_filter.return_value.first.return_value = mock_event
+        mock_res_filter.return_value.order_by.return_value.first.return_value = None
+
+        result = process_talk_published(
+            event_id=1,
+            talk_id=42,
+            external_id="REL123",
+            video_url="/studio/media/42/final/master.mp4",
+        )
+
+        assert result["status"] == "success"
+        assert result["video_url"] == "https://veditor.eventyay.com/studio/media/42/final/master.mp4"
+        assert len(created_resource) == 1
+        assert created_resource[0].link == "https://veditor.eventyay.com/studio/media/42/final/master.mp4"

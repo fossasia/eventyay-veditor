@@ -10,7 +10,7 @@ import os
 import time
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from django.conf import settings
 from django.db import DatabaseError
@@ -151,11 +151,11 @@ class WebhookView(View):
         # Resolve webhook shared secret: event-scoped secret takes precedence
         secret = None
         event_id = payload.get("event_id")
+        event_obj = None
         if event_id is not None and event_id != "":
             try:
                 from eventyay.base.models import Event
 
-                event_obj = None
                 if str(event_id).isdigit():
                     event_obj = Event.objects.filter(id=int(event_id)).first()
                 if not event_obj:
@@ -206,7 +206,36 @@ class WebhookView(View):
             video_url = raw_url.strip()
             parsed_video = urlparse(video_url)
             if parsed_video.scheme not in ("http", "https") or not parsed_video.netloc:
-                return JsonResponse({"error": "video_url must be a valid HTTP or HTTPS URL with host"}, status=400)
+                if (video_url.startswith("/") and not video_url.startswith("//")) or (not parsed_video.scheme and not parsed_video.netloc):
+                    resolved_base = None
+                    try:
+                        from .client import VEditorClient
+
+                        resolved_base = VEditorClient.resolve_base_url(event=event_obj)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("Failed resolving client base URL for event %s: %s", event_id, exc)
+
+                    if not resolved_base and getattr(settings, "configured", False):
+                        resolved_base = getattr(settings, "VEDITOR_API_BASE_URL", None) or getattr(settings, "VEDITOR_BASE_URL", None)
+
+                    if not resolved_base:
+                        resolved_base = os.environ.get("VEDITOR_API_BASE_URL") or os.environ.get("VEDITOR_BASE_URL")
+
+                    if not resolved_base:
+                        try:
+                            from .client import VEditorClient
+
+                            client = VEditorClient(event=event_obj)
+                            resolved_base = client.base_url
+                        except Exception as exc:  # noqa: BLE001
+                            logger.debug("Failed resolving client instance base URL for event %s: %s", event_id, exc)
+
+                    if resolved_base and str(resolved_base).strip():
+                        video_url = urljoin(str(resolved_base).strip().rstrip("/") + "/", video_url.lstrip("/"))
+                        parsed_video = urlparse(video_url)
+
+                if parsed_video.scheme not in ("http", "https") or not parsed_video.netloc:
+                    return JsonResponse({"error": "video_url must be a valid HTTP or HTTPS URL with host"}, status=400)
 
             if external_id is None or not str(external_id).strip():
                 return JsonResponse({"error": "Missing or invalid external_id for talk.published event"}, status=400)
