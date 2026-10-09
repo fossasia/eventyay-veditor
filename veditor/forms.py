@@ -62,8 +62,16 @@ class VEditorSettingsForm(forms.Form):
 
         allowed = getattr(settings, "VEDITOR_ALLOWED_ORIGINS", None)
         if allowed:
-            origin = f"{parsed.scheme}://{parsed.netloc}"
-            if origin not in allowed and parsed.netloc not in allowed and hostname not in allowed:
+            # Keep this normalization aligned with VEditorClient._validate_config.
+            allowed_set: set[str] = set()
+            if isinstance(allowed, str):
+                allowed_set = {o.strip().lower() for o in allowed.split(",") if o.strip()}
+            elif isinstance(allowed, (list, tuple, set)):
+                allowed_set = {str(o).strip().lower() for o in allowed if str(o).strip()}
+
+            origin = f"{parsed.scheme}://{parsed.netloc}".lower()
+            netloc = (parsed.netloc or "").lower()
+            if origin not in allowed_set and netloc not in allowed_set and hostname not in allowed_set:
                 raise forms.ValidationError(_("The VEditor URL origin is not in the allowed list."))
 
         return url.rstrip("/")

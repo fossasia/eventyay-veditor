@@ -412,6 +412,82 @@ def test_form_allowed_origins(settings):
     assert "veditor_api_base_url" in form_unallowed.errors
 
 
+def test_form_allowed_origins_string_exact_match(settings):
+    from veditor.forms import VEditorSettingsForm
+
+    settings.VEDITOR_ALLOWED_ORIGINS = "https://trusted.veditor.com, https://another.veditor.com"
+
+    form_exact = VEditorSettingsForm(data={"veditor_api_base_url": "https://trusted.veditor.com", "veditor_api_key": "key"})
+    assert form_exact.is_valid()
+
+    form_second = VEditorSettingsForm(data={"veditor_api_base_url": "https://another.veditor.com", "veditor_api_key": "key"})
+    assert form_second.is_valid()
+
+    # None of these URLs may match the allowlist entries
+    for url in (
+        "https://trusted.veditor",
+        "https://trusted.veditor.com:443",
+        "https://evil.com@trusted.veditor.com",
+        "https://untrusted.domain.org",
+        "https://trusted.veditor.com.evil.com",
+    ):
+        form = VEditorSettingsForm(data={"veditor_api_base_url": url, "veditor_api_key": "key"})
+        assert not form.is_valid()
+        assert "veditor_api_base_url" in form.errors
+
+
+def test_form_allowed_origins_case_insensitive(settings):
+    from veditor.forms import VEditorSettingsForm
+
+    # Uppercase input matches a list entry case-insensitively
+    settings.VEDITOR_ALLOWED_ORIGINS = ["https://trusted.veditor.com"]
+    form_list = VEditorSettingsForm(data={"veditor_api_base_url": "https://TRUSTED.VEDITOR.COM", "veditor_api_key": "key"})
+    assert form_list.is_valid()
+
+    # Uppercase input matches a comma-separated string entry case-insensitively
+    settings.VEDITOR_ALLOWED_ORIGINS = "https://trusted.veditor.com, https://another.veditor.com"
+    form_str = VEditorSettingsForm(data={"veditor_api_base_url": "https://TRUSTED.VEDITOR.COM", "veditor_api_key": "key"})
+    assert form_str.is_valid()
+
+
+def test_form_allowed_origins_whitespace_only_rejected(settings):
+    from veditor.forms import VEditorSettingsForm
+
+    # A whitespace-only string setting normalizes to an empty set, rejecting everything (matches client)
+    settings.VEDITOR_ALLOWED_ORIGINS = " , "
+    form = VEditorSettingsForm(data={"veditor_api_base_url": "https://trusted.veditor.com", "veditor_api_key": "key"})
+    assert not form.is_valid()
+    assert "veditor_api_base_url" in form.errors
+
+
+def test_form_allowed_origins_empty_string_skips_check(settings):
+    from veditor.forms import VEditorSettingsForm
+
+    # A falsy setting disables the check entirely (matches client)
+    settings.VEDITOR_ALLOWED_ORIGINS = ""
+    form = VEditorSettingsForm(data={"veditor_api_base_url": "https://any.veditor.example.com", "veditor_api_key": "key"})
+    assert form.is_valid()
+
+
+def test_form_allowed_origins_port_binding(settings):
+    from veditor.forms import VEditorSettingsForm
+
+    settings.VEDITOR_ALLOWED_ORIGINS = ["https://media.veditor.com:8443"]
+
+    form_port = VEditorSettingsForm(data={"veditor_api_base_url": "https://media.veditor.com:8443", "veditor_api_key": "key"})
+    assert form_port.is_valid()
+
+    # Same host without the allowlisted port must be rejected
+    form_no_port = VEditorSettingsForm(data={"veditor_api_base_url": "https://media.veditor.com", "veditor_api_key": "key"})
+    assert not form_no_port.is_valid()
+    assert "veditor_api_base_url" in form_no_port.errors
+
+    # Same host with a different port must be rejected
+    form_wrong_port = VEditorSettingsForm(data={"veditor_api_base_url": "https://media.veditor.com:9443", "veditor_api_key": "key"})
+    assert not form_wrong_port.is_valid()
+    assert "veditor_api_base_url" in form_wrong_port.errors
+
+
 def test_form_blank_api_key_handling():
     from veditor.forms import VEditorSettingsForm
 
