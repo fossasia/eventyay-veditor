@@ -57,6 +57,16 @@
                             <span class="help-block text-danger">{{ error }}</span>
                         {% endfor %}
                     </div>
+                    <div class="form-group {% if form.veditor_webhook_secret.errors %}has-error{% endif %}">
+                        <label for="{{ form.veditor_webhook_secret.id_for_label }}">{{ form.veditor_webhook_secret.label }}</label>
+                        {{ form.veditor_webhook_secret }}
+                        {% if form.veditor_webhook_secret.help_text %}
+                            <span class="help-block">{{ form.veditor_webhook_secret.help_text }}</span>
+                        {% endif %}
+                        {% for error in form.veditor_webhook_secret.errors %}
+                            <span class="help-block text-danger">{{ error }}</span>
+                        {% endfor %}
+                    </div>
                     <div class="form-group {% if form.veditor_api_base_url.errors %}has-error{% endif %}">
                         <label for="{{ form.veditor_api_base_url.id_for_label }}">{{ form.veditor_api_base_url.label }}</label>
                         {{ form.veditor_api_base_url }}
@@ -136,6 +146,16 @@
                                     <span class="help-block text-danger">{{ error }}</span>
                                 {% endfor %}
                             </div>
+                            <div class="form-group {% if form.veditor_webhook_secret.errors %}has-error{% endif %}">
+                                <label for="{{ form.veditor_webhook_secret.id_for_label }}">{{ form.veditor_webhook_secret.label }}</label>
+                                {{ form.veditor_webhook_secret }}
+                                {% if form.veditor_webhook_secret.help_text %}
+                                    <span class="help-block">{{ form.veditor_webhook_secret.help_text }}</span>
+                                {% endif %}
+                                {% for error in form.veditor_webhook_secret.errors %}
+                                    <span class="help-block text-danger">{{ error }}</span>
+                                {% endfor %}
+                            </div>
                             <div class="form-group {% if form.veditor_api_base_url.errors %}has-error{% endif %}">
                                 <label for="{{ form.veditor_api_base_url.id_for_label }}">{{ form.veditor_api_base_url.label }}</label>
                                 {{ form.veditor_api_base_url }}
@@ -182,6 +202,19 @@
                         <span class="label label-success veditor-label-connected">
                             <i class="fa fa-check"></i> {% trans "Connected" %}
                         </span>
+                        {% if has_event_scoped_secret %}
+                            <span class="label label-info veditor-label-webhook" title="{% trans 'Event-scoped webhook signature verification active' %}">
+                                <i class="fa fa-shield"></i> {% trans "Event Webhook Secret Configured" %}
+                            </span>
+                        {% elif has_global_secret %}
+                            <span class="label label-info veditor-label-webhook" title="{% trans 'Global webhook signature verification active' %}">
+                                <i class="fa fa-shield"></i> {% trans "Global Webhook Secret Configured" %}
+                            </span>
+                        {% else %}
+                            <span class="label label-default veditor-label-webhook" title="{% trans 'Configure a shared webhook secret to verify signatures' %}">
+                                <i class="fa fa-shield"></i> {% trans "No Webhook Secret" %}
+                            </span>
+                        {% endif %}
                     </div>
                     <div class="veditor-schedule-summary">
                         {% if talks_count %}
@@ -193,6 +226,26 @@
                         {% else %}
                             {% trans "No scheduled sessions found for this event yet." %}
                         {% endif %}
+                    </div>
+                </div>
+
+                <!-- Inbound Webhook Endpoint URL Display -->
+                <div class="veditor-webhook-box">
+                    <span class="text-muted"><strong><i class="fa fa-bell-o"></i> {% trans "Inbound Webhook Endpoint URL" %}:</strong></span>
+                    <div class="row">
+                        <div class="col-xs-12 col-md-8">
+                            <div class="input-group input-group-sm veditor-webhook-input-group">
+                                <input type="text" class="form-control code" id="inbound-webhook-url" value="{{ inbound_webhook_url }}" readonly>
+                                <span class="input-group-btn">
+                                    <button class="btn btn-default" type="button" id="btn-copy-webhook-url" data-copied-msg="{% trans "Copied webhook endpoint URL to clipboard!" %}" onclick="var btn=this; if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(document.getElementById('inbound-webhook-url').value).then(function() { alert(btn.getAttribute('data-copied-msg')); }).catch(function() {}); }">
+                                        <i class="fa fa-copy"></i> {% trans "Copy" %}
+                                    </button>
+                                </span>
+                            </div>
+                            <span class="help-block text-muted">
+                                {% trans "Set this URL as the Webhook URL in your VEditor Client Settings to receive talk bounds and published video updates." %}
+                            </span>
+                        </div>
                     </div>
                 </div>
 

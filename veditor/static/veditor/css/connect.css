@@ -226,3 +226,34 @@
     display: inline-block;
     margin: 0;
 }
+
+.veditor-label-webhook {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+}
+
+.veditor-webhook-box {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+}
+
+.veditor-webhook-box > span {
+    display: inline-block;
+    margin-bottom: 8px;
+}
+
+.veditor-webhook-input-group {
+    max-width: 100%;
+}
+
+.veditor-webhook-input-group input.code {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 13px;
+    background-color: #ffffff;
+    cursor: text;
+}

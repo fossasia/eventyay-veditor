@@ -272,6 +272,78 @@ def test_connect_view_post_save_settings_api_key_only(event, organizer_user, rf)
     assert event.settings.get("veditor_api_key") == "key-without-explicit-url"
 
 
+def test_connect_view_post_save_settings_with_webhook_secret(event, organizer_user, rf):
+    request = setup_request(
+        rf.post(
+            reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug}),
+            data={
+                "action": "save_settings",
+                "veditor_api_base_url": "http://localhost:8080",
+                "veditor_api_key": "some-key",
+                "veditor_webhook_secret": "my-shared-secret",
+            },
+        )
+    )
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    view = ConnectView.as_view()
+    response = view(request, organizer=event.organizer.slug, event=event.slug)
+
+    assert response.status_code == 302
+    assert event.settings.get("veditor_webhook_secret") == "my-shared-secret"
+
+
+def test_connect_view_post_save_settings_preserve_existing_webhook_secret(event, organizer_user, rf):
+    event.settings.set("veditor_webhook_secret", "original-webhook-secret")
+    event.settings.set("veditor_api_key", "original-key")
+    request = setup_request(
+        rf.post(
+            reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug}),
+            data={
+                "action": "save_settings",
+                "veditor_api_base_url": "http://localhost:8080",
+                "veditor_api_key": "",
+                "veditor_webhook_secret": "",
+            },
+        )
+    )
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    view = ConnectView.as_view()
+    response = view(request, organizer=event.organizer.slug, event=event.slug)
+
+    assert response.status_code == 302
+    assert event.settings.get("veditor_webhook_secret") == "original-webhook-secret"
+    assert event.settings.get("veditor_api_key") == "original-key"
+
+
+def test_connect_view_get_inbound_webhook_context(event, organizer_user, rf):
+    request = setup_request(rf.get(reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug})))
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    view = ConnectView.as_view()
+    response = view(request, organizer=event.organizer.slug, event=event.slug)
+
+    assert response.status_code == 200
+    assert "inbound_webhook_url" in response.context_data
+    expected_url = request.build_absolute_uri(reverse("plugins:veditor:webhook")) + f"?event={event.slug}"
+    assert response.context_data["inbound_webhook_url"] == expected_url
+    assert response.context_data["veditor_webhook_secret_configured"] is False
+    assert response.context_data["has_event_scoped_secret"] is False
+
+    # Now with webhook secret configured
+    event.settings.set("veditor_webhook_secret", "secret-xyz")
+    response2 = view(request, organizer=event.organizer.slug, event=event.slug)
+    assert response2.context_data["veditor_webhook_secret_configured"] is True
+    assert response2.context_data["has_event_scoped_secret"] is True
+
+
 def test_connect_view_post_with_auto_event_id(event, organizer_user, rf):
     event.settings.set("veditor_api_base_url", "http://localhost:8080")
     event.settings.set("veditor_api_key", "valid-key")

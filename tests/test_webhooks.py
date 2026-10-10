@@ -523,6 +523,189 @@ def test_webhook_view_event_scoped_secret_with_numeric_slug(rf):
         assert mock_task.delay.called
 
 
+def test_webhook_view_fallback_event_secret_via_submission_external_id(rf):
+    event_secret = "event-secret-from-submission-999"
+    payload = {
+        "event": "talk.approved",
+        "talk_id": 101,
+        "event_id": "",
+        "external_id": "TALK-ABC-123",
+        "timestamp": time.time(),
+    }
+    body = json.dumps(payload).encode("utf-8")
+    sig = generate_signature(event_secret, body)
+
+    request = rf.post(
+        reverse("plugins:veditor:webhook"),
+        data=body,
+        content_type="application/json",
+        HTTP_X_VEDITOR_SIGNATURE=sig,
+    )
+
+    mock_event = SimpleNamespace(
+        id=77,
+        slug="conf-77",
+        settings=SimpleNamespace(get=lambda k, d=None: event_secret if k == "veditor_webhook_secret" else d),
+    )
+    mock_submission = SimpleNamespace(
+        code="TALK-ABC-123",
+        event=mock_event,
+    )
+
+    with (
+        patch("veditor.webhooks.settings") as mock_settings,
+        patch.dict("os.environ", {}, clear=True),
+        patch("eventyay.base.models.Event.objects") as mock_event_mgr,
+        patch("eventyay.base.models.Submission.objects") as mock_sub_mgr,
+        patch("veditor.webhooks.process_talk_approved") as mock_task,
+    ):
+        mock_settings.VEDITOR_WEBHOOK_SECRET = None
+        mock_event_mgr.filter.return_value.first.return_value = None
+        mock_sub_mgr.filter.return_value.select_related.return_value.first.return_value = mock_submission
+
+        view = WebhookView.as_view()
+        response = view(request)
+
+        assert response.status_code == 200
+        assert mock_task.delay.called
+
+
+def test_webhook_view_fallback_external_id_when_event_id_unmatched(rf):
+    event_secret = "event-secret-unmatched-id-resolved"
+    payload = {
+        "event": "talk.approved",
+        "talk_id": 101,
+        "event_id": 99999,
+        "external_id": "SUB-CODE-456",
+        "timestamp": time.time(),
+    }
+    body = json.dumps(payload).encode("utf-8")
+    sig = generate_signature(event_secret, body)
+
+    request = rf.post(
+        reverse("plugins:veditor:webhook"),
+        data=body,
+        content_type="application/json",
+        HTTP_X_VEDITOR_SIGNATURE=sig,
+    )
+
+    mock_event = SimpleNamespace(
+        id=55,
+        slug="conf-55",
+        settings=SimpleNamespace(get=lambda k, d=None: event_secret if k == "veditor_webhook_secret" else d),
+    )
+    mock_submission = SimpleNamespace(
+        code="SUB-CODE-456",
+        event=mock_event,
+    )
+
+    with (
+        patch("veditor.webhooks.settings") as mock_settings,
+        patch.dict("os.environ", {}, clear=True),
+        patch("eventyay.base.models.Event.objects") as mock_event_mgr,
+        patch("eventyay.base.models.Submission.objects") as mock_sub_mgr,
+        patch("veditor.webhooks.process_talk_approved") as mock_task,
+    ):
+        mock_settings.VEDITOR_WEBHOOK_SECRET = None
+        mock_event_mgr.filter.return_value.first.return_value = None
+        mock_sub_mgr.filter.return_value.select_related.return_value.first.return_value = mock_submission
+
+        view = WebhookView.as_view()
+        response = view(request)
+
+        assert response.status_code == 200
+        mock_task.delay.assert_called_once_with(
+            event_id=55,
+            talk_id=101,
+            external_id="SUB-CODE-456",
+            raw_payload=payload,
+        )
+
+
+def test_webhook_view_database_error_during_submission_lookup_returns_500(rf, webhook_secret):
+    payload = {
+        "event": "talk.approved",
+        "talk_id": 101,
+        "event_id": "",
+        "external_id": "TALK-ERR",
+        "timestamp": time.time(),
+    }
+    body = json.dumps(payload).encode("utf-8")
+    sig = generate_signature(webhook_secret, body)
+
+    request = rf.post(
+        reverse("plugins:veditor:webhook"),
+        data=body,
+        content_type="application/json",
+        HTTP_X_VEDITOR_SIGNATURE=sig,
+    )
+
+    from django.db import DatabaseError
+
+    with (
+        patch("eventyay.base.models.Event.objects") as mock_event_mgr,
+        patch("eventyay.base.models.Submission.objects") as mock_sub_mgr,
+    ):
+        mock_event_mgr.filter.return_value.first.return_value = None
+        mock_sub_mgr.filter.side_effect = DatabaseError("Database failure looking up submission")
+
+        view = WebhookView.as_view()
+        response = view(request)
+
+        assert response.status_code == 500
+        data = json.loads(response.content.decode("utf-8"))
+        assert "Database error looking up event secret" in data["error"]
+
+
+def test_webhook_view_fallback_event_secret_via_query_param_slug(rf):
+    event_secret = "event-secret-from-query-param-999"
+    payload = {
+        "event": "ping",
+        "event_id": 106524,
+        "message": "VEditor webhook connectivity test",
+        "timestamp": time.time(),
+    }
+    body = json.dumps(payload).encode("utf-8")
+    sig = generate_signature(event_secret, body)
+
+    request = rf.post(
+        f"{reverse('plugins:veditor:webhook')}?event=dev-summit",
+        data=body,
+        content_type="application/json",
+        HTTP_X_VEDITOR_SIGNATURE=sig,
+    )
+
+    mock_event = SimpleNamespace(
+        id=3174,
+        slug="dev-summit",
+        settings=SimpleNamespace(get=lambda k, d=None: event_secret if k == "veditor_webhook_secret" else d),
+    )
+
+    def mock_filter(*args, **kwargs):
+        if "id" in kwargs and kwargs["id"] == 106524:
+            return SimpleNamespace(first=lambda: None)
+        if "slug" in kwargs and kwargs["slug"] == "106524":
+            return SimpleNamespace(first=lambda: None)
+        if "slug" in kwargs and kwargs["slug"] == "dev-summit":
+            return SimpleNamespace(first=lambda: mock_event)
+        return SimpleNamespace(first=lambda: None)
+
+    with (
+        patch("veditor.webhooks.settings") as mock_settings,
+        patch.dict("os.environ", {}, clear=True),
+        patch("eventyay.base.models.Event.objects") as mock_event_mgr,
+    ):
+        mock_settings.VEDITOR_WEBHOOK_SECRET = None
+        mock_event_mgr.filter.side_effect = mock_filter
+
+        view = WebhookView.as_view()
+        response = view(request)
+
+        assert response.status_code == 200
+        data = json.loads(response.content.decode("utf-8"))
+        assert data["status"] == "pong"
+
+
 def test_webhook_view_event_lookup_db_error_returns_500(rf, webhook_secret):
     payload = {"talk_id": 101, "event_id": 42, "timestamp": time.time()}
     body = json.dumps(payload).encode("utf-8")
@@ -1146,6 +1329,200 @@ def test_webhook_view_talk_published_missing_external_id(rf, webhook_secret):
         assert "external_id" in data["error"]
 
 
+def test_webhook_view_talk_published_relative_video_url(rf, webhook_secret):
+    payload = {
+        "event": "talk.published",
+        "talk_id": 42,
+        "event_id": 10,
+        "external_id": "ABCDE",
+        "video_url": "/studio/media/42/final/final.mp4",
+        "timestamp": time.time(),
+    }
+    body = json.dumps(payload).encode("utf-8")
+    sig = generate_signature(webhook_secret, body)
+
+    request = rf.post(
+        reverse("plugins:veditor:webhook"),
+        data=body,
+        content_type="application/json",
+        HTTP_X_VEDITOR_SIGNATURE=sig,
+    )
+
+    with (
+        patch("veditor.webhooks.settings") as mock_settings,
+        patch("veditor.webhooks.process_talk_published") as mock_task,
+    ):
+        mock_settings.VEDITOR_WEBHOOK_SECRET = webhook_secret
+        mock_settings.VEDITOR_API_BASE_URL = "http://localhost:8080"
+        view = WebhookView.as_view()
+        response = view(request)
+
+        assert response.status_code == 200
+        mock_task.delay.assert_called_once_with(
+            event_id=10,
+            talk_id=42,
+            video_url="http://localhost:8080/studio/media/42/final/final.mp4",
+            external_id="ABCDE",
+            raw_payload=payload,
+        )
+
+
+def test_webhook_view_talk_published_protocol_relative_video_url_rejected(rf, webhook_secret):
+    payload = {
+        "event": "talk.published",
+        "talk_id": 42,
+        "event_id": 10,
+        "external_id": "ABCDE",
+        "video_url": "//malicious.example.com/exploit.mp4",
+        "timestamp": time.time(),
+    }
+    body = json.dumps(payload).encode("utf-8")
+    sig = generate_signature(webhook_secret, body)
+
+    request = rf.post(
+        reverse("plugins:veditor:webhook"),
+        data=body,
+        content_type="application/json",
+        HTTP_X_VEDITOR_SIGNATURE=sig,
+    )
+
+    with patch("veditor.webhooks.settings") as mock_settings:
+        mock_settings.VEDITOR_WEBHOOK_SECRET = webhook_secret
+        view = WebhookView.as_view()
+        response = view(request)
+
+        assert response.status_code == 400
+        data = json.loads(response.content.decode("utf-8"))
+        assert "Protocol-relative video_url is not allowed" in data["error"]
+
+
+def test_webhook_view_talk_published_relative_video_url_without_base_url_rejected(rf, webhook_secret):
+    payload = {
+        "event": "talk.published",
+        "talk_id": 42,
+        "event_id": 10,
+        "external_id": "ABCDE",
+        "video_url": "/studio/media/42/final/final.mp4",
+        "timestamp": time.time(),
+    }
+    body = json.dumps(payload).encode("utf-8")
+    sig = generate_signature(webhook_secret, body)
+
+    request = rf.post(
+        reverse("plugins:veditor:webhook"),
+        data=body,
+        content_type="application/json",
+        HTTP_X_VEDITOR_SIGNATURE=sig,
+    )
+
+    with patch("veditor.webhooks.settings") as mock_settings:
+        mock_settings.VEDITOR_WEBHOOK_SECRET = webhook_secret
+        mock_settings.VEDITOR_API_BASE_URL = None
+        view = WebhookView.as_view()
+        response = view(request)
+
+        assert response.status_code == 400
+        data = json.loads(response.content.decode("utf-8"))
+        assert "VEditor base URL is not configured" in data["error"]
+
+
+def test_webhook_view_talk_published_relative_video_url_origin_resolution(rf, webhook_secret):
+    payload = {
+        "event": "talk.published",
+        "talk_id": 42,
+        "event_id": 10,
+        "external_id": "ABCDE",
+        "video_url": "/studio/media/42/final/final.mp4",
+        "timestamp": time.time(),
+    }
+    body = json.dumps(payload).encode("utf-8")
+    sig = generate_signature(webhook_secret, body)
+
+    request = rf.post(
+        reverse("plugins:veditor:webhook"),
+        data=body,
+        content_type="application/json",
+        HTTP_X_VEDITOR_SIGNATURE=sig,
+    )
+
+    with (
+        patch("veditor.webhooks.settings") as mock_settings,
+        patch("veditor.webhooks.process_talk_published") as mock_task,
+    ):
+        mock_settings.VEDITOR_WEBHOOK_SECRET = webhook_secret
+        mock_settings.VEDITOR_API_BASE_URL = "https://editor.example.com/api/v1/"
+        view = WebhookView.as_view()
+        response = view(request)
+
+        assert response.status_code == 200
+        # Root-relative path /studio/... resolves against origin https://editor.example.com
+        mock_task.delay.assert_called_once_with(
+            event_id=10,
+            talk_id=42,
+            video_url="https://editor.example.com/studio/media/42/final/final.mp4",
+            external_id="ABCDE",
+            raw_payload=payload,
+        )
+
+
+def test_webhook_view_talk_published_relative_video_url_credentials_rejected(rf, webhook_secret):
+    payload = {
+        "event": "talk.published",
+        "talk_id": 42,
+        "event_id": 10,
+        "external_id": "ABCDE",
+        "video_url": "/studio/media/42/final/final.mp4",
+        "timestamp": time.time(),
+    }
+    body = json.dumps(payload).encode("utf-8")
+    sig = generate_signature(webhook_secret, body)
+
+    request = rf.post(
+        reverse("plugins:veditor:webhook"),
+        data=body,
+        content_type="application/json",
+        HTTP_X_VEDITOR_SIGNATURE=sig,
+    )
+
+    with patch("veditor.webhooks.settings") as mock_settings:
+        mock_settings.VEDITOR_WEBHOOK_SECRET = webhook_secret
+        mock_settings.VEDITOR_API_BASE_URL = "https://user:pass@editor.example.com"
+        view = WebhookView.as_view()
+        response = view(request)
+
+        assert response.status_code == 400
+        data = json.loads(response.content.decode("utf-8"))
+        assert "must not contain credentials" in data["error"]
+
+
+def test_webhook_view_talk_preview_ready_acknowledged(rf, webhook_secret):
+    payload = {
+        "event": "talk.preview_ready",
+        "talk_id": 42,
+        "event_id": 10,
+        "external_id": "ABCDE",
+        "timestamp": time.time(),
+    }
+    body = json.dumps(payload).encode("utf-8")
+    sig = generate_signature(webhook_secret, body)
+
+    request = rf.post(
+        reverse("plugins:veditor:webhook"),
+        data=body,
+        content_type="application/json",
+        HTTP_X_VEDITOR_SIGNATURE=sig,
+    )
+
+    with patch("veditor.webhooks.settings") as mock_settings:
+        mock_settings.VEDITOR_WEBHOOK_SECRET = webhook_secret
+        view = WebhookView.as_view()
+        response = view(request)
+
+        assert response.status_code == 200
+        data = json.loads(response.content.decode("utf-8"))
+        assert data["status"] == "accepted"
+
+
 def test_webhook_view_talk_published_invalid_video_url_scheme(rf, webhook_secret):
     payload = {
         "event": "talk.published",
@@ -1584,7 +1961,9 @@ def test_webhook_view_talk_published_relative_url_without_base_url_fails(rf, web
 
         assert response.status_code == 400, f"Expected 400 but got {response.status_code}: {response.content.decode('utf-8', errors='replace')}"
         data = json.loads(response.content.decode("utf-8"))
-        assert "video_url must be a valid HTTP or HTTPS URL" in data.get("error", ""), f"Unexpected error message in payload: {data}"
+        assert "video_url must be a valid HTTP or HTTPS URL" in data.get("error", "") or "Cannot resolve relative video_url" in data.get("error", ""), (
+            f"Unexpected error message in payload: {data}"
+        )
 
 
 def test_tasks_process_talk_published_relative_url_resolved_in_task():

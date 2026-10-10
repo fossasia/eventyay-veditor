@@ -156,24 +156,70 @@ class WebhookView(View):
 
         # Resolve webhook shared secret: event-scoped secret takes precedence
         secret = None
-        event_id = payload.get("event_id")
         event_obj = None
-        if event_id is not None and event_id != "":
-            try:
-                from eventyay.base.models import Event
+        event_id = payload.get("event_id")
+        external_id = payload.get("external_id")
+        try:
+            from eventyay.base.models import Event
 
+            if event_id is not None and event_id != "":
                 if str(event_id).isdigit():
                     event_obj = Event.objects.filter(id=int(event_id)).first()
                 if not event_obj:
                     event_obj = Event.objects.filter(slug=str(event_id)).first()
 
-                if event_obj and hasattr(event_obj, "settings"):
+            # Fallback 1: if event_id in payload did not resolve directly, check query parameters (?event=<slug> or ?event_id=<id>)
+            if not event_obj:
+                query_event = request.GET.get("event") or request.GET.get("event_id")
+                if query_event is not None and query_event != "":
+                    if str(query_event).isdigit():
+                        event_obj = Event.objects.filter(id=int(query_event)).first()
+                    if not event_obj:
+                        event_obj = Event.objects.filter(slug=str(query_event)).first()
+
+            # Fallback 2: resolve or verify event via talk submission code (external_id)
+            if external_id:
+                try:
+                    try:
+                        from eventyay.base.models import Submission
+                    except ImportError:
+                        try:
+                            from eventyay.submission.models import Submission
+                        except ImportError:
+                            Submission = None
+
+                    if Submission is not None:
+                        try:
+                            from django_scopes import scopes_disabled
+                        except ImportError:
+                            scopes_disabled = None
+
+                        if scopes_disabled:
+                            with scopes_disabled():
+                                submission = Submission.objects.filter(code=str(external_id)).select_related("event").first()
+                        else:
+                            submission = Submission.objects.filter(code=str(external_id)).select_related("event").first()
+
+                        if submission and submission.event:
+                            event_obj = submission.event
+                except DatabaseError:
+                    raise
+                except Exception as sub_exc:  # noqa: BLE001
+                    logger.debug(
+                        "Failed looking up event via submission external_id %s: %s",
+                        external_id,
+                        sub_exc,
+                    )
+
+            if event_obj:
+                event_id = event_obj.id
+                if hasattr(event_obj, "settings"):
                     secret = event_obj.settings.get("veditor_webhook_secret")
-            except DatabaseError as exc:
-                logger.error("Database error looking up event-level webhook secret for event %s: %s", event_id, exc)
-                return JsonResponse({"error": "Database error looking up event secret"}, status=500)
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("Failed looking up event-level webhook secret for event %s: %s", event_id, exc)
+        except DatabaseError as exc:
+            logger.error("Database error looking up event-level webhook secret for event %s: %s", event_id, exc)
+            return JsonResponse({"error": "Database error looking up event secret"}, status=500)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Failed looking up event-level webhook secret for event %s: %s", event_id, exc)
 
         if not secret:
             secret = (
@@ -195,6 +241,9 @@ class WebhookView(View):
         if event_type == "ping":
             return JsonResponse({"status": "pong", "message": "Webhook verified"}, status=200)
 
+        if event_type == "talk.preview_ready":
+            return JsonResponse({"status": "accepted", "message": "Preview event acknowledged"}, status=200)
+
         if event_type not in ("talk.approved", "talk.bounds_pending", "talk.published"):
             return JsonResponse({"error": f"Unsupported webhook event type: {event_type}"}, status=400)
 
@@ -210,6 +259,23 @@ class WebhookView(View):
             if not raw_url or not isinstance(raw_url, str) or not raw_url.strip():
                 return JsonResponse({"error": "Missing or invalid video_url for talk.published event"}, status=400)
             video_url = raw_url.strip()
+            if video_url.startswith("//"):
+                return JsonResponse({"error": "Protocol-relative video_url is not allowed"}, status=400)
+            if video_url.startswith("/"):
+                base_url = (
+                    (event_obj.settings.get("veditor_api_base_url") if event_obj and hasattr(event_obj, "settings") else None)
+                    or getattr(settings, "VEDITOR_API_BASE_URL", None)
+                    or os.environ.get("VEDITOR_API_BASE_URL")
+                )
+                if not base_url or not str(base_url).strip():
+                    return JsonResponse({"error": "Cannot resolve relative video_url: VEditor base URL is not configured"}, status=400)
+                parsed_base = urlparse(str(base_url).strip())
+                if parsed_base.scheme not in ("http", "https") or not parsed_base.netloc:
+                    return JsonResponse({"error": "Configured VEditor base URL is invalid"}, status=400)
+                if parsed_base.username is not None or parsed_base.password is not None:
+                    return JsonResponse({"error": "Configured VEditor base URL must not contain credentials"}, status=400)
+                video_url = f"{parsed_base.scheme}://{parsed_base.netloc}{video_url}"
+
             parsed_video = urlparse(video_url)
             if parsed_video.scheme not in ("http", "https") or not parsed_video.netloc:
                 if (video_url.startswith("/") and not video_url.startswith("//")) or (not parsed_video.scheme and not parsed_video.netloc):
