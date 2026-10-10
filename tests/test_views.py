@@ -519,6 +519,282 @@ def test_signals_nav_registration():
     assert "veditor_nav_event_common" in common_uids
 
 
+def test_connect_view_post_sync_schedule_success(event, organizer_user, rf):
+    request = setup_request(
+        rf.post(
+            reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug}),
+            data={"action": "sync_schedule"},
+        )
+    )
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    with patch("veditor.views.VEditorClient") as mock_client_cls:
+        mock_client = mock_client_cls.return_value
+        mock_client.get_scoped_event_id.return_value = event.id
+        mock_client.sync_talks.return_value = {"status": "ok", "imported_count": 5}
+
+        view = ConnectView.as_view()
+        response = view(request, organizer=event.organizer.slug, event=event.slug)
+
+        assert response.status_code == 302
+        assert response.url == reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug})
+        assert mock_client.sync_talks.called
+        assert not mock_client.request_sso_jwt.called
+        messages = [str(m.message) for m in request._messages]
+        assert any("Successfully synchronized 5 talk(s) with VEditor" in m for m in messages)
+
+
+def test_connect_view_get_populates_rooms_in_room_form(event, organizer_user, rf):
+    mock_room1 = SimpleNamespace(name="Main Hall")
+    mock_room2 = SimpleNamespace(name="Workshop Room")
+    mock_rooms = MagicMock()
+    mock_rooms.all.return_value.order_by.return_value = [mock_room1, mock_room2]
+    mock_rooms.count.return_value = 2
+    event.rooms = mock_rooms
+
+    request = setup_request(rf.get(reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug})))
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    view = ConnectView()
+    view.setup(request, organizer=event.organizer.slug, event=event.slug)
+    context = view.get_context_data()
+
+    assert "room_form" in context
+    assert context["rooms_count"] == 2
+    choices = [c[0] for c in context["room_form"].fields["room"].choices]
+    assert "Main Hall" in choices
+    assert "Workshop Room" in choices
+
+
+def test_connect_view_post_attach_room_recording_success(event, organizer_user, rf):
+    mock_room1 = SimpleNamespace(name="Main Hall")
+    mock_rooms = MagicMock()
+    mock_rooms.all.return_value.order_by.return_value = [mock_room1]
+    event.rooms = mock_rooms
+
+    request = setup_request(
+        rf.post(
+            reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug}),
+            data={
+                "action": "attach_room_recording",
+                "room": "Main Hall",
+                "video_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                "recording_start": "2026-09-25T09:00:00Z",
+            },
+        )
+    )
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    distinct_veditor_event_id = 98765
+    with patch("veditor.views.VEditorClient") as mock_client_cls:
+        mock_client = mock_client_cls.return_value
+        mock_client.get_scoped_event_id.return_value = distinct_veditor_event_id
+        mock_client.sync_talks.return_value = {"status": "ok"}
+        mock_client.attach_room_recording.return_value = {
+            "status": "ok",
+            "attached_count": 3,
+            "room": "Main Hall",
+            "event_id": distinct_veditor_event_id,
+            "talk_ids": [101, 102, 103],
+        }
+
+        view = ConnectView.as_view()
+        response = view(request, organizer=event.organizer.slug, event=event.slug)
+
+        assert response.status_code == 302
+        # Verify auto-sync ran prior to attachment and used the resolved scoped event ID
+        assert mock_client.get_scoped_event_id.called
+        mock_client.sync_talks.assert_called_once_with(event_id=distinct_veditor_event_id, talk_slots=[])
+        mock_client.attach_room_recording.assert_called_once_with(
+            room="Main Hall",
+            event_id=distinct_veditor_event_id,
+            video_url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            video_file=None,
+            recording_start="2026-09-25T09:00:00Z",
+        )
+        messages = [str(m.message) for m in request._messages]
+        assert any("Successfully attached room recording for room 'Main Hall'" in m for m in messages)
+        assert any("IDs: 101, 102, 103" in m for m in messages)
+
+
+def test_connect_view_post_attach_room_recording_sync_failure_stops_attachment(event, organizer_user, rf):
+    mock_room1 = SimpleNamespace(name="Main Hall")
+    mock_rooms = MagicMock()
+    mock_rooms.all.return_value.order_by.return_value = [mock_room1]
+    event.rooms = mock_rooms
+
+    request = setup_request(
+        rf.post(
+            reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug}),
+            data={
+                "action": "attach_room_recording",
+                "room": "Main Hall",
+                "video_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            },
+        )
+    )
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    with patch("veditor.views.VEditorClient") as mock_client_cls:
+        mock_client = mock_client_cls.return_value
+        mock_client.get_scoped_event_id.return_value = 1234
+        mock_client.sync_talks.side_effect = VEditorSyncError("Network timeout during talk sync")
+
+        view = ConnectView.as_view()
+        response = view(request, organizer=event.organizer.slug, event=event.slug)
+
+        assert response.status_code == 302
+        assert mock_client.sync_talks.called
+        assert not mock_client.attach_room_recording.called
+        messages = [str(m.message) for m in request._messages]
+        assert any("Failed to synchronize schedule prior to attaching recording" in m for m in messages)
+
+
+def test_connect_view_post_attach_room_recording_unexpected_sync_failure_propagates(event, organizer_user, rf):
+    mock_room1 = SimpleNamespace(name="Main Hall")
+    mock_rooms = MagicMock()
+    mock_rooms.all.return_value.order_by.return_value = [mock_room1]
+    event.rooms = mock_rooms
+
+    request = setup_request(
+        rf.post(
+            reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug}),
+            data={
+                "action": "attach_room_recording",
+                "room": "Main Hall",
+                "video_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            },
+        )
+    )
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    with patch("veditor.views.VEditorClient") as mock_client_cls:
+        mock_client = mock_client_cls.return_value
+        mock_client.get_scoped_event_id.return_value = 1234
+        mock_client.sync_talks.side_effect = RuntimeError("Unexpected internal crash")
+
+        view = ConnectView.as_view()
+        with pytest.raises(RuntimeError, match="Unexpected internal crash"):
+            view(request, organizer=event.organizer.slug, event=event.slug)
+
+
+def test_connect_view_post_attach_room_recording_with_file(event, organizer_user, rf):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    mock_room1 = SimpleNamespace(name="Main Hall")
+    mock_rooms = MagicMock()
+    mock_rooms.all.return_value.order_by.return_value = [mock_room1]
+    event.rooms = mock_rooms
+
+    uploaded_video = SimpleUploadedFile("hall_a.mp4", b"fake-video-bytes", content_type="video/mp4")
+
+    request = setup_request(
+        rf.post(
+            reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug}),
+            data={
+                "action": "attach_room_recording",
+                "room": "Main Hall",
+                "video_file": uploaded_video,
+            },
+        )
+    )
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    with patch("veditor.views.VEditorClient") as mock_client_cls:
+        mock_client = mock_client_cls.return_value
+        mock_client.get_scoped_event_id.return_value = event.id
+        mock_client.sync_talks.return_value = {"status": "ok"}
+        mock_client.attach_room_recording.return_value = {
+            "status": "ok",
+            "attached_count": 2,
+            "room": "Main Hall",
+            "event_id": event.id,
+            "talk_ids": [10, 11],
+        }
+
+        view = ConnectView.as_view()
+        response = view(request, organizer=event.organizer.slug, event=event.slug)
+
+        assert response.status_code == 302
+        assert mock_client.attach_room_recording.called
+        call_kwargs = mock_client.attach_room_recording.call_args[1]
+        assert call_kwargs["room"] == "Main Hall"
+        assert call_kwargs["video_file"] is not None
+
+
+def test_connect_view_post_attach_room_recording_validation_error(event, organizer_user, rf):
+    mock_room1 = SimpleNamespace(name="Main Hall")
+    mock_rooms = MagicMock()
+    mock_rooms.all.return_value.order_by.return_value = [mock_room1]
+    event.rooms = mock_rooms
+
+    request = setup_request(
+        rf.post(
+            reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug}),
+            data={
+                "action": "attach_room_recording",
+                "room": "Main Hall",
+            },
+        )
+    )
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    view = ConnectView.as_view()
+    response = view(request, organizer=event.organizer.slug, event=event.slug)
+
+    assert response.status_code == 200
+    assert "room_form" in response.context_data
+    assert response.context_data["room_form"].errors
+
+
+def test_connect_view_post_attach_room_recording_api_error(event, organizer_user, rf):
+    mock_room1 = SimpleNamespace(name="Main Hall")
+    mock_rooms = MagicMock()
+    mock_rooms.all.return_value.order_by.return_value = [mock_room1]
+    event.rooms = mock_rooms
+
+    request = setup_request(
+        rf.post(
+            reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug}),
+            data={
+                "action": "attach_room_recording",
+                "room": "Main Hall",
+                "video_url": "https://vimeo.com/invalid",
+            },
+        )
+    )
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    with patch("veditor.views.VEditorClient") as mock_client_cls:
+        mock_client = mock_client_cls.return_value
+        mock_client.get_scoped_event_id.return_value = event.id
+        mock_client.sync_talks.return_value = {"status": "ok"}
+        mock_client.attach_room_recording.side_effect = VEditorSyncError("Invalid stream URL")
+
+        view = ConnectView.as_view()
+        response = view(request, organizer=event.organizer.slug, event=event.slug)
+
+        assert response.status_code == 302
+        messages = [str(m.message) for m in request._messages]
+        assert any("Failed to attach room recording: Invalid stream URL" in m for m in messages)
+
+
 def test_connect_view_rendered_ui_unconfigured(event, organizer_user, rf):
     """Verify template and view context in unconfigured state match Eventyay design tokens."""
     request = setup_request(rf.get(reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug})))
@@ -576,3 +852,47 @@ def test_connect_view_rendered_ui_configured(event, organizer_user, rf):
     assert "veditor-dashboard-hero" not in source
     assert "Open Studio without Sync" not in source
     assert "Zero-Config Target Event" not in source
+
+
+def test_room_recording_attachment_form_recording_start_timezone_validation(event):
+    from veditor.forms import RoomRecordingAttachmentForm
+
+    mock_room = SimpleNamespace(name="Main Hall")
+    mock_rooms = MagicMock()
+    mock_rooms.all.return_value.order_by.return_value = [mock_room]
+    event.rooms = mock_rooms
+
+    # Naive timestamp without timezone offset should be rejected
+    form_naive = RoomRecordingAttachmentForm(
+        event=event,
+        data={
+            "room": "Main Hall",
+            "video_url": "https://example.com/video.mp4",
+            "recording_start": "2026-09-25T09:00:00",
+        },
+    )
+    assert not form_naive.is_valid()
+    assert "recording_start" in form_naive.errors
+    assert "must include a timezone offset" in str(form_naive.errors["recording_start"])
+
+    # Timezone-aware timestamp with UTC 'Z' should be accepted
+    form_utc = RoomRecordingAttachmentForm(
+        event=event,
+        data={
+            "room": "Main Hall",
+            "video_url": "https://example.com/video.mp4",
+            "recording_start": "2026-09-25T09:00:00Z",
+        },
+    )
+    assert form_utc.is_valid()
+
+    # Timezone-aware timestamp with explicit offset should be accepted
+    form_offset = RoomRecordingAttachmentForm(
+        event=event,
+        data={
+            "room": "Main Hall",
+            "video_url": "https://example.com/video.mp4",
+            "recording_start": "2026-09-25T09:00:00+02:00",
+        },
+    )
+    assert form_offset.is_valid()

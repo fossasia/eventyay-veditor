@@ -1,5 +1,7 @@
 """Unit tests for the VEditor API client, mappers, and exceptions."""
 
+import io
+import json
 from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -732,3 +734,181 @@ def test_client_allows_custom_url_with_explicit_event_key():
     client = VEditorClient(event=event_mock)
     assert client.base_url == "https://custom.test"
     assert client.api_key == "event-key-456"
+
+
+@responses.activate
+def test_attach_room_recording_with_source_path_success():
+    client = VEditorClient(base_url="https://veditor.test", api_key="test-key")
+    responses.add(
+        responses.POST,
+        "https://veditor.test/talks/room/attach-recording",
+        json={
+            "status": "ok",
+            "room": "Main Hall",
+            "event_id": 42,
+            "attached_count": 3,
+            "talk_ids": [101, 102, 103],
+        },
+        status=200,
+    )
+
+    result = client.attach_room_recording(
+        room="Main Hall",
+        event_id=42,
+        source_path="/media/ingest/day1/main_hall.mp4",
+        recording_start=datetime(2026, 9, 25, 9, 0, 0, tzinfo=UTC),
+    )
+
+    assert result["status"] == "ok"
+    assert result["attached_count"] == 3
+    assert result["room"] == "Main Hall"
+    assert result["event_id"] == 42
+    assert result["talk_ids"] == [101, 102, 103]
+
+    assert len(responses.calls) == 1
+    req_body = json.loads(responses.calls[0].request.body)
+    assert req_body["room"] == "Main Hall"
+    assert req_body["event_id"] == 42
+    assert req_body["source_path"] == "/media/ingest/day1/main_hall.mp4"
+    assert req_body["recording_start"] == "2026-09-25T09:00:00+00:00"
+
+
+@responses.activate
+def test_attach_room_recording_with_video_url():
+    client = VEditorClient(base_url="https://veditor.test", api_key="test-key")
+    responses.add(
+        responses.POST,
+        "https://veditor.test/talks/room/attach-recording",
+        json={
+            "status": "ok",
+            "room": "Main Hall",
+            "event_id": 42,
+            "attached_count": 3,
+            "talk_ids": [101, 102, 103],
+        },
+        status=200,
+    )
+
+    result = client.attach_room_recording(
+        room="Main Hall",
+        event_id=42,
+        video_url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        recording_start=datetime(2026, 9, 25, 9, 0, 0, tzinfo=UTC),
+    )
+
+    assert result["status"] == "ok"
+    assert result["attached_count"] == 3
+    assert result["room"] == "Main Hall"
+    assert result["event_id"] == 42
+    assert result["talk_ids"] == [101, 102, 103]
+
+    assert len(responses.calls) == 1
+    req_body = json.loads(responses.calls[0].request.body)
+    assert req_body["room"] == "Main Hall"
+    assert req_body["event_id"] == 42
+    assert req_body["video_url"] == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    assert req_body["recording_start"] == "2026-09-25T09:00:00+00:00"
+
+
+@responses.activate
+def test_attach_room_recording_with_video_file():
+    client = VEditorClient(base_url="https://veditor.test", api_key="test-key")
+    responses.add(
+        responses.POST,
+        "https://veditor.test/talks/room/attach-recording",
+        json={"status": "ok", "attached_count": 2, "room": "Workshop Room", "event_id": 5, "talk_ids": [1, 2]},
+        status=200,
+    )
+
+    fake_file = io.BytesIO(b"fake-mp4-content")
+    fake_file.name = "recording.mp4"
+
+    result = client.attach_room_recording(
+        room="Workshop Room",
+        event_id=5,
+        video_file=fake_file,
+        recording_start="2026-09-25T11:00:00Z",
+    )
+
+    assert result["attached_count"] == 2
+    assert len(responses.calls) == 1
+    req = responses.calls[0].request
+    assert "multipart/form-data" in req.headers.get("Content-Type", "")
+    assert b"fake-mp4-content" in req.body
+
+
+@responses.activate
+def test_attach_room_recording_with_relative_key():
+    client = VEditorClient(base_url="https://veditor.test", api_key="test-key")
+    responses.add(
+        responses.POST,
+        "https://veditor.test/talks/room/attach-recording",
+        json={"status": "ok", "attached_count": 1, "room": "Room B", "event_id": 10, "talk_ids": [55]},
+        status=200,
+    )
+
+    result = client.attach_room_recording(
+        room="Room B",
+        event_id="10",
+        relative_key="day1/room_b.mp4",
+        recording_start="2026-09-25T10:00:00Z",
+    )
+
+    assert result["attached_count"] == 1
+    req_body = json.loads(responses.calls[0].request.body)
+    assert req_body["relative_key"] == "day1/room_b.mp4"
+    assert req_body["recording_start"] == "2026-09-25T10:00:00Z"
+
+
+def test_attach_room_recording_validation_errors():
+    client = VEditorClient(base_url="https://veditor.test", api_key="test-key")
+
+    # Missing room
+    with pytest.raises(ValueError, match="Room name is required"):
+        client.attach_room_recording(room="", video_url="https://youtube.com/watch?v=123")
+
+    # Missing all media sources
+    with pytest.raises(ValueError, match="Either video_url, video_file, relative_key, or source_path must be provided"):
+        client.attach_room_recording(room="Main Hall")
+
+    # Whitespace only paths
+    with pytest.raises(ValueError, match="Either video_url, video_file, relative_key, or source_path must be provided"):
+        client.attach_room_recording(room="Main Hall", relative_key="   ", source_path=" ")
+
+    # Conflicting multiple sources
+    with pytest.raises(ValueError, match="Conflicting recording sources provided"):
+        client.attach_room_recording(
+            room="Main Hall",
+            video_url="https://youtube.com/watch?v=123",
+            source_path="/media/file.mp4",
+        )
+
+
+@responses.activate
+def test_attach_room_recording_omitted_event_id_auto_resolves():
+    client = VEditorClient(base_url="https://veditor.test", api_key="test-key")
+    responses.add(
+        responses.GET,
+        "https://veditor.test/events",
+        json=[{"id": 777, "name": "Event 777"}],
+        status=200,
+    )
+    responses.add(
+        responses.POST,
+        "https://veditor.test/talks/room/attach-recording",
+        json={"status": "ok", "attached_count": 1, "room": "Room A", "event_id": 777, "talk_ids": [10]},
+        status=200,
+    )
+
+    # Calling attach_room_recording with event_id=None
+    result = client.attach_room_recording(
+        room="Room A",
+        event_id=None,
+        video_url="https://youtube.com/watch?v=abc",
+    )
+
+    assert result["status"] == "ok"
+    assert result["event_id"] == 777
+    post_req = [c for c in responses.calls if c.request.method == "POST"][0]
+    req_body = json.loads(post_req.request.body)
+    assert req_body["event_id"] == 777

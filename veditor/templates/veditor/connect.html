@@ -200,21 +200,128 @@
                     <form method="post" action="" class="veditor-action-form">
                         {% csrf_token %}
                         {% if talks_count %}
-                            <button type="submit" name="action" value="sync_and_launch" class="btn btn-primary" id="btn-launch-veditor">
-                                <i class="fa fa-refresh"></i> {% trans "Sync Schedule & Launch Studio" %}
+                            <button type="submit" name="action" value="sync_schedule" class="btn btn-default" id="btn-sync-schedule">
+                                <i class="fa fa-refresh"></i> {% trans "Sync Schedule" %}
                             </button>
-                            <button type="submit" name="action" value="open_studio" class="btn btn-default" id="btn-open-studio-only">
-                                <i class="fa fa-external-link"></i> {% trans "Launch Studio" %}
+                            <button type="submit" name="action" value="sync_and_launch" class="btn btn-default" id="btn-sync-and-launch">
+                                <i class="fa fa-external-link"></i> {% trans "Sync & Launch Studio" %}
+                            </button>
+                            <button type="submit" name="action" value="open_studio" class="btn btn-primary" id="btn-launch-veditor">
+                                <i class="fa fa-desktop"></i> {% trans "Launch Studio" %}
                             </button>
                         {% else %}
                             <button type="submit" name="action" value="open_studio" class="btn btn-primary" id="btn-launch-veditor">
-                                <i class="fa fa-external-link"></i> {% trans "Launch Studio" %}
+                                <i class="fa fa-desktop"></i> {% trans "Launch Studio" %}
                             </button>
                         {% endif %}
                     </form>
                 </div>
             </div>
         </div>
+
+        {% if veditor_configured %}
+        <div class="panel panel-default veditor-panel" id="card-attach-room-recording">
+            <div class="panel-heading">
+                <div class="pull-right">
+                    <span class="label label-info veditor-label-ingest">
+                        <i class="fa fa-film"></i> {% trans "Batch Ingestion" %}
+                    </span>
+                </div>
+                <h3 class="panel-title">
+                    <i class="fa fa-video-camera"></i> {% trans "Attach Room Recording" %}
+                </h3>
+            </div>
+            <div class="panel-body">
+                <p class="text-muted">
+                    {% trans "Attach continuous video footage recorded for an entire room. VEditor will automatically match all scheduled talks in that room and pre-align start and end boundaries on the editor timeline." %}
+                </p>
+
+                {% if rooms_count == 0 %}
+                    <div class="alert alert-warning" style="margin-bottom: 0;">
+                        <i class="fa fa-exclamation-triangle"></i>
+                        {% trans "No rooms are configured for this event. Configure rooms and schedule talks in Eventyay before attaching room recordings." %}
+                    </div>
+                {% else %}
+                    <form method="post" action="" enctype="multipart/form-data" class="veditor-room-recording-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="attach_room_recording">
+
+                        <!-- Event Room Selection -->
+                        <div class="form-group {% if room_form.room.errors %}has-error{% endif %}">
+                            <label for="{{ room_form.room.id_for_label }}">{{ room_form.room.label }} <span class="text-danger">*</span></label>
+                            {{ room_form.room }}
+                            {% if room_form.room.help_text %}
+                                <span class="help-block">{{ room_form.room.help_text }}</span>
+                            {% endif %}
+                            {% for error in room_form.room.errors %}
+                                <span class="help-block text-danger">{{ error }}</span>
+                            {% endfor %}
+                        </div>
+
+                        <!-- Recording Media Source (URL or File) -->
+                        <div class="well veditor-subwell veditor-ingest-source-well">
+                            <h4 class="veditor-subwell-title">
+                                <i class="fa fa-video-camera text-muted"></i> {% trans "Recording Media Source" %}
+                            </h4>
+                            <p class="text-muted small" style="margin-bottom: 12px;">
+                                {% trans "Provide a livestream/video link (YouTube, Vimeo, or direct stream URL) OR upload a recorded video file directly from your computer." %}
+                            </p>
+                            <div class="row">
+                                <div class="col-xs-12 col-sm-6">
+                                    <div class="form-group {% if room_form.video_url.errors %}has-error{% endif %}" style="margin-bottom: 0;">
+                                        <label for="{{ room_form.video_url.id_for_label }}">{{ room_form.video_url.label }}</label>
+                                        {{ room_form.video_url }}
+                                        {% if room_form.video_url.help_text %}
+                                            <span class="help-block" style="margin-bottom: 0;">{{ room_form.video_url.help_text }}</span>
+                                        {% endif %}
+                                        {% for error in room_form.video_url.errors %}
+                                            <span class="help-block text-danger">{{ error }}</span>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                                <div class="col-xs-12 col-sm-6">
+                                    <div class="form-group {% if room_form.video_file.errors %}has-error{% endif %}" style="margin-bottom: 0;">
+                                        <label for="{{ room_form.video_file.id_for_label }}">{{ room_form.video_file.label }}</label>
+                                        {{ room_form.video_file }}
+                                        {% if room_form.video_file.help_text %}
+                                            <span class="help-block" style="margin-bottom: 0;">{{ room_form.video_file.help_text }}</span>
+                                        {% endif %}
+                                        {% for error in room_form.video_file.errors %}
+                                            <span class="help-block text-danger">{{ error }}</span>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Recording Start Time Offset -->
+                        <div class="form-group {% if room_form.recording_start.errors %}has-error{% endif %}">
+                            <label for="{{ room_form.recording_start.id_for_label }}">{{ room_form.recording_start.label }}</label>
+                            {{ room_form.recording_start }}
+                            {% if room_form.recording_start.help_text %}
+                                <span class="help-block">{{ room_form.recording_start.help_text }}</span>
+                            {% endif %}
+                            {% for error in room_form.recording_start.errors %}
+                                <span class="help-block text-danger">{{ error }}</span>
+                            {% endfor %}
+                        </div>
+
+                        {% if room_form.non_field_errors %}
+                            <div class="alert alert-danger">
+                                {% for error in room_form.non_field_errors %}
+                                    <p>{{ error }}</p>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+
+                        <button type="submit" class="btn btn-primary" id="btn-attach-room-recording">
+                            <i class="fa fa-paperclip"></i> {% trans "Attach Recording to Room Talks" %}
+                        </button>
+                    </form>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
 
         {% if talks %}
         <!-- Scheduled Talks Table (Full Width 12-Columns) -->

@@ -226,3 +226,30 @@
     display: inline-block;
     margin: 0;
 }
+
+.veditor-label-ingest {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 10px;
+    font-weight: 500;
+}
+
+.veditor-ingest-source-well {
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+    margin-top: 15px;
+    margin-bottom: 18px;
+}
+
+.veditor-subwell-title {
+    margin-top: 0;
+    margin-bottom: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.veditor-room-recording-form .form-control {
+    border-radius: 4px;
+}
+

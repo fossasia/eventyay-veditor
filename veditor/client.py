@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import os
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -10,6 +12,8 @@ import requests
 from django.conf import settings
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+logger = logging.getLogger(__name__)
 
 from .exceptions import (
     VEditorAuthError,
@@ -191,6 +195,12 @@ class VEditorClient:
         url = self._build_url(path)
         kwargs.setdefault("timeout", self.timeout)
         kwargs.setdefault("allow_redirects", False)
+
+        # Allow requests to generate multipart/form-data boundary headers when uploading files
+        if "files" in kwargs:
+            req_headers = dict(kwargs.get("headers") or {})
+            req_headers["Content-Type"] = None
+            kwargs["headers"] = req_headers
 
         try:
             response = self.session.request(method=method, url=url, **kwargs)
@@ -374,3 +384,100 @@ class VEditorClient:
             return response_data
 
         raise VEditorError("Unexpected response type from SSO token endpoint", response_data=response_data)
+
+    def attach_room_recording(
+        self,
+        room: str,
+        event_id: int | str | None = None,
+        video_url: str | None = None,
+        video_file: Any | None = None,
+        relative_key: str | None = None,
+        source_path: str | None = None,
+        recording_start: str | datetime | None = None,
+    ) -> dict[str, Any]:
+        """Attach a continuous room recording to all scheduled sessions in that room.
+
+        Calls POST /talks/room/attach-recording on the VEditor server.
+        Matches talks in the specified room whose schedule falls within the
+        recording duration.
+
+        Args:
+            room: Name of the room as configured in the schedule.
+            event_id: Target event ID in VEditor. If None, auto-resolved via get_scoped_event_id().
+            video_url: External video / livestream URL (YouTube, Vimeo, or HTTP stream).
+            video_file: File-like object or tuple suitable for requests multipart upload.
+            relative_key: Optional path to recording file relative to VEditor's ingest roots.
+            source_path: Optional shared storage path to recording file accessible by VEditor.
+            recording_start: Optional ISO-8601 string or datetime of when recording began.
+
+        Returns:
+            Dict containing status, attached_count, room, event_id, talk_ids.
+        """
+        if not room or not str(room).strip():
+            raise ValueError("Room name is required to attach room recording.")
+
+        clean_url = str(video_url).strip() if video_url else None
+        clean_rel = str(relative_key).strip() if relative_key else None
+        clean_src = str(source_path).strip() if source_path else None
+
+        provided_sources = [
+            name
+            for name, val in [
+                ("video_url", clean_url),
+                ("video_file", video_file),
+                ("relative_key", clean_rel),
+                ("source_path", clean_src),
+            ]
+            if val is not None and (val != "" if isinstance(val, str) else True)
+        ]
+
+        if not provided_sources:
+            raise ValueError("Either video_url, video_file, relative_key, or source_path must be provided.")
+        if len(provided_sources) > 1:
+            raise ValueError(f"Conflicting recording sources provided: {', '.join(provided_sources)}. Please specify only one recording source.")
+
+        if event_id is None:
+            try:
+                event_id = self.get_scoped_event_id()
+            except Exception as exc:
+                logger.debug("Could not auto-resolve scoped event ID: %s", exc)
+
+        rec_start_val: str | None = None
+        if recording_start is not None:
+            if isinstance(recording_start, datetime):
+                rec_start_val = recording_start.isoformat()
+            else:
+                rec_start_val = str(recording_start).strip()
+
+        # Handle multipart file upload
+        if video_file is not None:
+            data: dict[str, Any] = {"room": str(room).strip()}
+            if event_id is not None:
+                data["event_id"] = str(event_id)
+            if rec_start_val:
+                data["recording_start"] = rec_start_val
+            files = {"file": video_file}
+            return self._request("POST", "/talks/room/attach-recording", data=data, files=files)
+
+        # Handle JSON request for URL or file paths
+        payload: dict[str, Any] = {"room": str(room).strip()}
+
+        if event_id is not None:
+            try:
+                payload["event_id"] = int(event_id)
+            except (ValueError, TypeError):
+                payload["event_id"] = event_id
+
+        if clean_url:
+            payload["video_url"] = clean_url
+
+        if clean_rel:
+            payload["relative_key"] = clean_rel
+
+        if clean_src:
+            payload["source_path"] = clean_src
+
+        if rec_start_val:
+            payload["recording_start"] = rec_start_val
+
+        return self._request("POST", "/talks/room/attach-recording", json=payload)
