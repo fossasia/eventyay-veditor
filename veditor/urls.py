@@ -14,6 +14,11 @@ urlpatterns = [
         name="connect",
     ),
     path(
+        "common/event/<orgslug:organizer>/<slug:event>/veditor/talk/<slug:talk_code>/review/",
+        views.SpeakerReviewLaunchView.as_view(),
+        name="speaker-review",
+    ),
+    path(
         "api/v1/veditor/webhook",
         webhooks.WebhookView.as_view(),
     ),

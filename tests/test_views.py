@@ -11,9 +11,14 @@ from django.test import RequestFactory
 from django.urls import reverse
 from eventyay.control.signals import nav_event, nav_event_common
 
-from veditor.exceptions import VEditorNetworkError, VEditorSyncError
+from veditor.exceptions import (
+    VEditorConfigError,
+    VEditorError,
+    VEditorNetworkError,
+    VEditorSyncError,
+)
 from veditor.signals import control_nav_veditor
-from veditor.views import ConnectView
+from veditor.views import ConnectView, SpeakerReviewLaunchView
 
 
 def setup_request(request):
@@ -81,6 +86,32 @@ def organizer_user():
     mock_u.is_authenticated = True
     mock_u.has_event_permission.return_value = True
     return mock_u
+
+
+@pytest.fixture
+def speaker_user():
+    """Mock speaker user fixture."""
+    mock_u = MagicMock()
+    mock_u.is_authenticated = True
+    mock_u.email = "speaker@example.com"
+    mock_u.fullname = "Alice Speaker"
+    mock_u.has_event_permission.return_value = False
+    return mock_u
+
+
+@pytest.fixture
+def confirmed_submission(event):
+    """Mock confirmed talk submission fixture."""
+    speaker = SimpleNamespace(id=10, email="speaker@example.com", name="Alice Speaker")
+    return SimpleNamespace(
+        id=101,
+        code="TALK101",
+        title="Keynote: Future of Open Source",
+        state="confirmed",
+        event=event,
+        speakers=SimpleNamespace(all=lambda: [speaker]),
+        slots=SimpleNamespace(first=lambda: None),
+    )
 
 
 @pytest.fixture
@@ -810,3 +841,283 @@ def test_connect_view_rendered_ui_configured(event, organizer_user, rf):
     assert "veditor-dashboard-hero" not in source
     assert "Open Studio without Sync" not in source
     assert "Zero-Config Target Event" not in source
+
+
+# ============================================================================
+# Speaker Review Launch View Tests
+# ============================================================================
+
+
+def test_speaker_review_unauthenticated(event, confirmed_submission, rf):
+    url = reverse(
+        "plugins:veditor:speaker-review",
+        kwargs={
+            "organizer": event.organizer.slug,
+            "event": event.slug,
+            "talk_code": confirmed_submission.code,
+        },
+    )
+    request = setup_request(rf.get(url))
+    request.user = SimpleNamespace(is_authenticated=False)
+    request.event = event
+    request.submission = confirmed_submission
+
+    view = SpeakerReviewLaunchView.as_view()
+    response = view(request, organizer=event.organizer.slug, event=event.slug, talk_code=confirmed_submission.code)
+    assert response.status_code == 302
+    assert "/login" in response.url or "login" in response.url
+
+
+def test_speaker_review_submission_not_found(event, speaker_user, rf):
+    url = reverse(
+        "plugins:veditor:speaker-review",
+        kwargs={
+            "organizer": event.organizer.slug,
+            "event": event.slug,
+            "talk_code": "NONEXISTENT",
+        },
+    )
+    request = setup_request(rf.get(url))
+    request.user = speaker_user
+    request.event = event
+
+    from django.http import Http404
+
+    view = SpeakerReviewLaunchView.as_view()
+    with pytest.raises(Http404):
+        view(request, organizer=event.organizer.slug, event=event.slug, talk_code="NONEXISTENT")
+
+
+def test_speaker_review_unauthorized_non_speaker(event, confirmed_submission, user, rf):
+    user.email = "stranger@example.com"
+    url = reverse(
+        "plugins:veditor:speaker-review",
+        kwargs={
+            "organizer": event.organizer.slug,
+            "event": event.slug,
+            "talk_code": confirmed_submission.code,
+        },
+    )
+    request = setup_request(rf.get(url))
+    request.user = user
+    request.event = event
+    request.submission = confirmed_submission
+
+    view = SpeakerReviewLaunchView.as_view()
+    with pytest.raises(PermissionDenied):
+        view(request, organizer=event.organizer.slug, event=event.slug, talk_code=confirmed_submission.code)
+
+
+@pytest.mark.parametrize("state", ["submitted", "accepted", "rejected", "withdrawn", "canceled"])
+def test_speaker_review_blocks_non_confirmed_submissions(event, confirmed_submission, speaker_user, rf, state):
+    confirmed_submission.state = state
+    url = reverse(
+        "plugins:veditor:speaker-review",
+        kwargs={
+            "organizer": event.organizer.slug,
+            "event": event.slug,
+            "talk_code": confirmed_submission.code,
+        },
+    )
+    request = setup_request(rf.get(url, HTTP_REFERER="/common/sessions/"))
+    request.user = speaker_user
+    request.event = event
+    request.submission = confirmed_submission
+
+    view = SpeakerReviewLaunchView.as_view()
+    response = view(request, organizer=event.organizer.slug, event=event.slug, talk_code=confirmed_submission.code)
+
+    assert response.status_code == 302
+    assert response.url == "/common/sessions/"
+    messages = [m.message for m in request._messages]
+    assert any("confirmed sessions" in str(m) for m in messages)
+
+
+def test_speaker_review_launch_success(event, confirmed_submission, speaker_user, rf):
+    url = reverse(
+        "plugins:veditor:speaker-review",
+        kwargs={
+            "organizer": event.organizer.slug,
+            "event": event.slug,
+            "talk_code": confirmed_submission.code,
+        },
+    )
+    request = setup_request(rf.get(url))
+    request.user = speaker_user
+    request.event = event
+    request.submission = confirmed_submission
+
+    with patch("veditor.views.VEditorClient") as mock_client_cls:
+        mock_client = mock_client_cls.return_value
+        mock_client.base_url = "https://editor.example.com"
+        mock_client.get_scoped_event_id.return_value = 42
+        mock_client.request_sso_jwt.return_value = (
+            "mock_speaker_sso_token",
+            {"url": "/studio/talks/101?sso_token=mock_speaker_sso_token"},
+        )
+
+        view = SpeakerReviewLaunchView.as_view()
+        response = view(request, organizer=event.organizer.slug, event=event.slug, talk_code=confirmed_submission.code)
+
+        assert response.status_code == 302
+        assert response.url == "https://editor.example.com/studio/talks/101?sso_token=mock_speaker_sso_token"
+        mock_client.request_sso_jwt.assert_called_once_with(
+            event_id="42",
+            talk_id=confirmed_submission.code,
+            role="speaker",
+            email="speaker@example.com",
+            display_name="Alice Speaker",
+            return_response_data=True,
+        )
+
+
+def test_speaker_review_launch_success_token_string_fallback(event, confirmed_submission, speaker_user, rf):
+    url = reverse(
+        "plugins:veditor:speaker-review",
+        kwargs={
+            "organizer": event.organizer.slug,
+            "event": event.slug,
+            "talk_code": confirmed_submission.code,
+        },
+    )
+    request = setup_request(rf.get(url))
+    request.user = speaker_user
+    request.event = event
+    request.submission = confirmed_submission
+
+    with patch("veditor.views.VEditorClient") as mock_client_cls:
+        mock_client = mock_client_cls.return_value
+        mock_client.base_url = "https://editor.example.com"
+        mock_client.get_scoped_event_id.return_value = 42
+        # Mock returning single string token
+        mock_client.request_sso_jwt.return_value = "raw_sso_token_123"
+
+        view = SpeakerReviewLaunchView.as_view()
+        response = view(request, organizer=event.organizer.slug, event=event.slug, talk_code=confirmed_submission.code)
+
+        assert response.status_code == 302
+        assert response.url == f"https://editor.example.com/studio/talks/{confirmed_submission.code}?sso_token=raw_sso_token_123"
+
+
+def test_speaker_review_launch_by_organizer_user(event, confirmed_submission, organizer_user, rf):
+    organizer_user.email = "admin@example.com"
+    organizer_user.fullname = "Event Admin"
+    url = reverse(
+        "plugins:veditor:speaker-review",
+        kwargs={
+            "organizer": event.organizer.slug,
+            "event": event.slug,
+            "talk_code": confirmed_submission.code,
+        },
+    )
+    request = setup_request(rf.get(url))
+    request.user = organizer_user
+    request.event = event
+    request.submission = confirmed_submission
+
+    with patch("veditor.views.VEditorClient") as mock_client_cls:
+        mock_client = mock_client_cls.return_value
+        mock_client.base_url = "https://editor.example.com"
+        mock_client.get_scoped_event_id.return_value = 42
+        mock_client.request_sso_jwt.return_value = "admin_speaker_sso_token"
+
+        view = SpeakerReviewLaunchView.as_view()
+        response = view(request, organizer=event.organizer.slug, event=event.slug, talk_code=confirmed_submission.code)
+
+        assert response.status_code == 302
+        assert "sso_token=admin_speaker_sso_token" in response.url
+        mock_client.request_sso_jwt.assert_called_once_with(
+            event_id="42",
+            talk_id=str(confirmed_submission.code),
+            role="speaker",
+            email=organizer_user.email,
+            display_name=organizer_user.fullname,
+            return_response_data=True,
+        )
+
+
+def test_speaker_review_veditor_config_error(event, confirmed_submission, speaker_user, rf):
+    url = reverse(
+        "plugins:veditor:speaker-review",
+        kwargs={
+            "organizer": event.organizer.slug,
+            "event": event.slug,
+            "talk_code": confirmed_submission.code,
+        },
+    )
+    request = setup_request(rf.get(url, HTTP_REFERER="/common/sessions/"))
+    request.user = speaker_user
+    request.event = event
+    request.submission = confirmed_submission
+
+    with patch("veditor.views.VEditorClient", side_effect=VEditorConfigError("Base URL missing")):
+        view = SpeakerReviewLaunchView.as_view()
+        response = view(request, organizer=event.organizer.slug, event=event.slug, talk_code=confirmed_submission.code)
+
+        assert response.status_code == 302
+        assert response.url == "/common/sessions/"
+        messages = [m.message for m in request._messages]
+        assert any("Video review is not configured" in str(m) for m in messages)
+
+
+def test_speaker_review_auto_sync_and_retry_on_initial_error(event, confirmed_submission, speaker_user, rf):
+    url = reverse(
+        "plugins:veditor:speaker-review",
+        kwargs={
+            "organizer": event.organizer.slug,
+            "event": event.slug,
+            "talk_code": confirmed_submission.code,
+        },
+    )
+    request = setup_request(rf.get(url))
+    request.user = speaker_user
+    request.event = event
+    request.submission = confirmed_submission
+
+    with patch("veditor.views.VEditorClient") as mock_client_cls:
+        mock_client = mock_client_cls.return_value
+        mock_client.base_url = "https://editor.example.com"
+        mock_client.get_scoped_event_id.return_value = 42
+        mock_client.request_sso_jwt.side_effect = [
+            VEditorError("Talk not found", status_code=404),
+            ("retried_sso_token", {"url": "/studio/talks/101?sso_token=retried_sso_token"}),
+        ]
+        mock_client.sync_talk.return_value = {"status": "ok", "id": 101}
+
+        view = SpeakerReviewLaunchView.as_view()
+        response = view(request, organizer=event.organizer.slug, event=event.slug, talk_code=confirmed_submission.code)
+
+        assert response.status_code == 302
+        assert response.url == "https://editor.example.com/studio/talks/101?sso_token=retried_sso_token"
+        assert mock_client.sync_talk.called
+        assert mock_client.request_sso_jwt.call_count == 2
+
+
+def test_speaker_review_sso_failure_handles_gracefully(event, confirmed_submission, speaker_user, rf):
+    url = reverse(
+        "plugins:veditor:speaker-review",
+        kwargs={
+            "organizer": event.organizer.slug,
+            "event": event.slug,
+            "talk_code": confirmed_submission.code,
+        },
+    )
+    request = setup_request(rf.get(url, HTTP_REFERER="/common/sessions/"))
+    request.user = speaker_user
+    request.event = event
+    request.submission = confirmed_submission
+
+    with patch("veditor.views.VEditorClient") as mock_client_cls:
+        mock_client = mock_client_cls.return_value
+        mock_client.base_url = "https://editor.example.com"
+        mock_client.get_scoped_event_id.return_value = 42
+        mock_client.request_sso_jwt.side_effect = VEditorError("VEditor API timeout")
+        mock_client.sync_talk.side_effect = VEditorError("Sync failed")
+
+        view = SpeakerReviewLaunchView.as_view()
+        response = view(request, organizer=event.organizer.slug, event=event.slug, talk_code=confirmed_submission.code)
+
+        assert response.status_code == 302
+        assert response.url == "/common/sessions/"
+        messages = [m.message for m in request._messages]
+        assert any("Failed to launch video review" in str(m) for m in messages)

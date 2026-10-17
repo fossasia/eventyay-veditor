@@ -345,7 +345,8 @@ class VEditorClient:
         email: str | None = None,
         display_name: str | None = None,
         expires_in_seconds: int | None = None,
-    ) -> str:
+        return_response_data: bool = False,
+    ) -> str | tuple[str, dict[str, Any]]:
         """Request a scoped SSO JWT token for browser handoff, reviewer QA, or speaker review."""
         normalized_role = "organizer" if role in ("organiser", "organizer") else role
         if normalized_role == "organizer":
@@ -372,8 +373,12 @@ class VEditorClient:
             token = response_data.get("token") or response_data.get("sso_token") or response_data.get("jwt")
             if not token:
                 raise VEditorError("No token received in SSO response", response_data=response_data)
+            if return_response_data:
+                return str(token), response_data
             return str(token)
         if isinstance(response_data, str):
+            if return_response_data:
+                return response_data, {}
             return response_data
 
         raise VEditorError("Unexpected response type from SSO token endpoint", response_data=response_data)

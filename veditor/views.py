@@ -5,17 +5,27 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 from django.conf import settings
 from django.contrib import messages
-from django.http import HttpResponseRedirect
+from django.contrib.auth.mixins import LoginRequiredMixin
+from django.core.exceptions import PermissionDenied
+from django.http import Http404, HttpResponseRedirect
 from django.shortcuts import redirect
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.translation import gettext_lazy as _
+from django.views import View
 from django.views.generic import TemplateView
-from django_scopes import scope
+from django_scopes import scope, scopes_disabled
 from eventyay.base.models import TalkSlot
+
+try:
+    from eventyay.base.models import Event, Submission
+except ImportError:
+    Event = None  # type: ignore
+    Submission = None  # type: ignore
 from eventyay.control.permissions import EventPermissionRequiredMixin
 
 from .client import VEditorClient
@@ -339,3 +349,218 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
             )
             context = self.get_context_data(**kwargs)
             return self.render_to_response(context)
+
+
+class SpeakerReviewLaunchView(LoginRequiredMixin, View):
+    """View to launch direct 1-click video review for a confirmed session with an on-demand speaker SSO JWT."""
+
+    def get_fallback_url(self, request, event: Any = None) -> str:
+        """Resolve a safe return URL when launch cannot proceed."""
+        referer = request.META.get("HTTP_REFERER")
+        if referer and url_has_allowed_host_and_scheme(
+            url=referer,
+            allowed_hosts={request.get_host()},
+            require_https=request.is_secure(),
+        ):
+            return referer
+
+        try:
+            return reverse("eventyay_common:sessions")
+        except Exception:
+            pass
+
+        if event and getattr(event, "slug", None):
+            org_slug = getattr(getattr(event, "organizer", None), "slug", None)
+            if org_slug:
+                try:
+                    return reverse(
+                        "cfp:event.user.submissions",
+                        kwargs={"organizer": org_slug, "event": event.slug},
+                    )
+                except Exception:
+                    pass
+
+        return "/"
+
+    def get(self, request, *args: Any, **kwargs: Any) -> HttpResponseRedirect:
+        event_slug = kwargs.get("event")
+        organizer_slug = kwargs.get("organizer")
+        talk_code = kwargs.get("talk_code") or kwargs.get("code")
+
+        event_obj = getattr(request, "event", None)
+        if not event_obj and Event is not None:
+            with scopes_disabled():
+                event_obj = Event.objects.filter(slug=event_slug, organizer__slug=organizer_slug).first()
+                if not event_obj and str(event_slug).isdigit():
+                    event_obj = Event.objects.filter(id=int(event_slug), organizer__slug=organizer_slug).first()
+
+        if not event_obj:
+            raise Http404(_("Event not found."))
+
+        submission = getattr(request, "submission", None)
+        if not submission:
+            try:
+                with scope(event=event_obj):
+                    if Submission is not None and getattr(event_obj, "id", None):
+                        submission = Submission.objects.filter(code=talk_code).select_related("event", "event__organizer").prefetch_related("speakers").first()
+                        if not submission and str(talk_code).isdigit():
+                            submission = (
+                                Submission.objects.filter(id=int(talk_code)).select_related("event", "event__organizer").prefetch_related("speakers").first()
+                            )
+            except Exception as db_exc:
+                logger.debug("Could not query submission from database: %s", db_exc)
+
+        if not submission:
+            raise Http404(_("Talk submission not found."))
+
+        user = request.user
+        user_email = (getattr(user, "email", None) or "").strip().lower()
+
+        is_speaker = False
+        speakers_attr = getattr(submission, "speakers", None)
+        if user_email and speakers_attr:
+            speakers = speakers_attr.all() if callable(getattr(speakers_attr, "all", None)) else speakers_attr
+            for sp in speakers:
+                sp_email = (getattr(sp, "email", None) or "").strip().lower()
+                if sp_email and sp_email == user_email:
+                    is_speaker = True
+                    break
+
+        has_event_perm = hasattr(user, "has_event_permission") and user.has_event_permission(
+            getattr(event_obj, "organizer", None),
+            event_obj,
+            "can_change_event_settings",
+            request=request,
+        )
+
+        if not is_speaker and not has_event_perm:
+            raise PermissionDenied(_("You do not have permission to review this session."))
+
+        # Strict state check: only confirmed sessions can be reviewed
+        if getattr(submission, "state", None) != "confirmed":
+            messages.warning(
+                request,
+                _("Video review is only available for confirmed sessions on the event schedule."),
+            )
+            return HttpResponseRedirect(self.get_fallback_url(request, event_obj))
+
+        try:
+            client = VEditorClient(event=event_obj)
+        except VEditorConfigError as exc:
+            logger.warning("VEditor client configuration error for %s: %s", getattr(event_obj, "slug", ""), exc)
+            messages.error(
+                request,
+                _("Video review is not configured for this event. Please contact the event organizer."),
+            )
+            return HttpResponseRedirect(self.get_fallback_url(request, event_obj))
+
+        target_event_id = str(event_obj.id)
+        try:
+            if hasattr(client, "get_scoped_event_id"):
+                scoped = client.get_scoped_event_id()
+                if scoped:
+                    target_event_id = str(scoped)
+        except Exception as scoped_exc:
+            logger.debug("Could not resolve scoped event ID: %s", scoped_exc)
+
+        display_name = getattr(user, "fullname", None) or getattr(user, "name", None)
+        if not display_name and hasattr(user, "get_display_name"):
+            display_name = user.get_display_name()
+        display_name = display_name or user_email
+
+        submission_code = getattr(submission, "code", talk_code)
+
+        try:
+            sso_res = client.request_sso_jwt(
+                event_id=target_event_id,
+                talk_id=str(submission_code),
+                role="speaker",
+                email=user_email,
+                display_name=display_name,
+                return_response_data=True,
+            )
+            if isinstance(sso_res, tuple) and len(sso_res) == 2:
+                token, sso_data = sso_res
+            else:
+                token, sso_data = str(sso_res), {}
+        except (VEditorError, ValueError) as exc:
+            # Only attempt talk-sync retry if talk was not found (HTTP 404)
+            is_404 = getattr(exc, "status_code", None) == 404 or (getattr(getattr(exc, "response", None), "status_code", None) == 404)
+            if not is_404:
+                logger.warning(
+                    "Failed to request speaker SSO JWT for submission %s: %s",
+                    submission_code,
+                    exc,
+                )
+                messages.error(
+                    request,
+                    _("Failed to launch video review. Please try again later or contact support."),
+                )
+                return HttpResponseRedirect(self.get_fallback_url(request, event_obj))
+
+            try:
+                target_slot = getattr(submission, "slots", None)
+                slot_obj = target_slot.first() if target_slot and hasattr(target_slot, "first") else None
+                if slot_obj is None:
+                    slot_obj = submission
+                client.sync_talk(slot_obj, event_id=target_event_id)
+                sso_res = client.request_sso_jwt(
+                    event_id=target_event_id,
+                    talk_id=str(submission_code),
+                    role="speaker",
+                    email=user_email,
+                    display_name=display_name,
+                    return_response_data=True,
+                )
+                if isinstance(sso_res, tuple) and len(sso_res) == 2:
+                    token, sso_data = sso_res
+                else:
+                    token, sso_data = str(sso_res), {}
+            except Exception as retry_exc:
+                logger.exception(
+                    "Failed to establish speaker SSO session for submission %s (initial error: %s, retry error: %s)",
+                    submission_code,
+                    exc,
+                    retry_exc,
+                )
+                messages.error(
+                    request,
+                    _("Failed to launch video review. Please try again later or contact support."),
+                )
+                return HttpResponseRedirect(self.get_fallback_url(request, event_obj))
+
+        redirect_path = sso_data.get("url") if isinstance(sso_data, dict) else None
+        if redirect_path:
+            parsed_redirect = urlparse(redirect_path)
+            if parsed_redirect.scheme in ("http", "https"):
+                parsed_base = urlparse(client.base_url)
+                allowed_netlocs = {parsed_base.netloc.lower()}
+                raw_extra = getattr(settings, "VEDITOR_ALLOWED_ORIGINS", [])
+                if isinstance(raw_extra, str):
+                    extra_origins = [o.strip() for o in raw_extra.split(",") if o.strip()]
+                elif isinstance(raw_extra, (list, tuple, set)):
+                    extra_origins = list(raw_extra)
+                else:
+                    extra_origins = []
+
+                for origin in extra_origins:
+                    netloc = urlparse(origin).netloc or str(origin).strip()
+                    if netloc:
+                        allowed_netlocs.add(netloc.lower())
+
+                if (parsed_redirect.netloc or "").lower() in allowed_netlocs:
+                    redirect_url = redirect_path
+                else:
+                    logger.warning(
+                        "SSO redirect host '%s' is not in allowed origins, falling back to client.base_url",
+                        parsed_redirect.netloc,
+                    )
+                    query = urlencode({"sso_token": token})
+                    redirect_url = f"{client.base_url}/studio/talks/{submission_code}?{query}"
+            else:
+                redirect_url = f"{client.base_url}/{redirect_path.lstrip('/')}"
+        else:
+            query = urlencode({"sso_token": token})
+            redirect_url = f"{client.base_url}/studio/talks/{submission_code}?{query}"
+
+        return HttpResponseRedirect(redirect_url)
