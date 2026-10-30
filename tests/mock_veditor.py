@@ -194,6 +194,42 @@ class MockVEditor:
             content_type="application/json",
         )
 
+        # PATCH /events/{event_id}
+        patch_event_pattern = re.compile(rf"^{re.escape(self.base_url)}/events/(?P<event_id>[^/]+)$")
+
+        def patch_event_callback(request: Any) -> tuple[int, dict[str, str], str]:
+            if not self._check_auth(request):
+                return (401, {}, json.dumps({"detail": "Invalid or missing API key"}))
+            body_bytes = request.body if isinstance(request.body, bytes) else (request.body or "").encode("utf-8")
+            data = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
+            match = patch_event_pattern.match(request.url.split("?")[0])
+            event_id = int(match.group("event_id")) if match and match.group("event_id").isdigit() else 1
+            res_event = {"id": event_id, **data}
+            return (200, {"Content-Type": "application/json"}, json.dumps(res_event))
+
+        self._rsps.add_callback(
+            responses.PATCH,
+            patch_event_pattern,
+            callback=patch_event_callback,
+            content_type="application/json",
+        )
+
+        # POST /events
+        def post_event_callback(request: Any) -> tuple[int, dict[str, str], str]:
+            if not self._check_auth(request):
+                return (401, {}, json.dumps({"detail": "Invalid or missing API key"}))
+            body_bytes = request.body if isinstance(request.body, bytes) else (request.body or "").encode("utf-8")
+            data = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
+            res_event = {"id": 1, **data}
+            return (201, {"Content-Type": "application/json"}, json.dumps(res_event))
+
+        self._rsps.add_callback(
+            responses.POST,
+            f"{self.base_url}/events",
+            callback=post_event_callback,
+            content_type="application/json",
+        )
+
         # POST /talks/schedule/import
         def schedule_import_callback(request: Any) -> tuple[int, dict[str, str], str]:
             if not self._check_auth(request):

@@ -238,6 +238,16 @@
                         <span class="label label-info veditor-label-webhook" title="{% trans 'Speaker review magic link expiration window' %}">
                             <i class="fa fa-clock-o"></i> {% blocktrans with days=speaker_review_window_days %}{{ days }}d Review Window{% endblocktrans %}
                         </span>
+                        {% if event_start_date %}
+                            <span class="label label-info veditor-label-webhook" title="{% trans 'Event schedule duration' %}">
+                                <i class="fa fa-calendar"></i>
+                                {% if event_duration_days > 1 and event_end_date %}
+                                    {{ event_start_date|date:"SHORT_DATE_FORMAT" }} – {{ event_end_date|date:"SHORT_DATE_FORMAT" }} ({{ event_duration_days }} {% trans "days" %})
+                                {% else %}
+                                    {{ event_start_date|date:"SHORT_DATE_FORMAT" }} (1 {% trans "day" %})
+                                {% endif %}
+                            </span>
+                        {% endif %}
                     </div>
                     <div class="veditor-schedule-summary">
                         {% if talks_count %}
@@ -378,6 +388,18 @@
                                 <span class="help-block">{{ room_form.recording_start.help_text }}</span>
                             {% endif %}
                             {% for error in room_form.recording_start.errors %}
+                                <span class="help-block text-danger">{{ error }}</span>
+                            {% endfor %}
+                        </div>
+
+                        <!-- Target Session Date (Multi-Day Room Scoping) -->
+                        <div class="form-group {% if room_form.target_date.errors %}has-error{% endif %}">
+                            <label for="{{ room_form.target_date.id_for_label }}">{{ room_form.target_date.label }}</label>
+                            {{ room_form.target_date }}
+                            {% if room_form.target_date.help_text %}
+                                <span class="help-block">{{ room_form.target_date.help_text }}</span>
+                            {% endif %}
+                            {% for error in room_form.target_date.errors %}
                                 <span class="help-block text-danger">{{ error }}</span>
                             {% endfor %}
                         </div>

@@ -1,5 +1,6 @@
 """Unit and integration tests for the Connect view and navigation signals."""
 
+from datetime import UTC
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -14,6 +15,7 @@ from eventyay.control.signals import nav_event, nav_event_common
 from veditor.exceptions import (
     VEditorConfigError,
     VEditorError,
+    VEditorEventNotFoundError,
     VEditorNetworkError,
     VEditorSyncError,
 )
@@ -1441,3 +1443,156 @@ def test_speaker_review_sso_failure_handles_gracefully(event, confirmed_submissi
         assert response.url == "/common/sessions/"
         messages = [m.message for m in request._messages]
         assert any("Failed to launch video review" in str(m) for m in messages)
+
+
+def test_connect_view_get_context_data_event_dates(event, organizer_user, rf):
+    """Verify ConnectView populates event start date, end date, and duration days in context."""
+    from datetime import datetime
+
+    event.date_from = datetime(2026, 9, 25, 9, 0, tzinfo=UTC)
+    event.date_to = datetime(2026, 9, 27, 18, 0, tzinfo=UTC)
+
+    request = setup_request(rf.get(reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug})))
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    view = ConnectView()
+    view.setup(request, organizer=event.organizer.slug, event=event.slug)
+    context = view.get_context_data()
+
+    assert context["event_start_date"] == event.date_from.date()
+    assert context["event_end_date"] == event.date_to.date()
+    assert context["event_duration_days"] == 3
+
+
+def test_connect_view_post_attach_room_recording_with_target_date(event, organizer_user, rf):
+    """Verify ConnectView passes target_date to attach_room_recording when supplied."""
+    mock_room1 = SimpleNamespace(name="Main Hall")
+    mock_rooms = MagicMock()
+    mock_rooms.all.return_value.order_by.return_value = [mock_room1]
+    event.rooms = mock_rooms
+
+    request = setup_request(
+        rf.post(
+            reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug}),
+            data={
+                "action": "attach_room_recording",
+                "room": "Main Hall",
+                "video_url": "https://example.com/recordings/room1_day2.mp4",
+                "recording_start": "2026-09-26T09:00:00Z",
+                "target_date": "2026-09-26",
+            },
+        )
+    )
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    distinct_veditor_event_id = 98765
+    with patch("veditor.views.VEditorClient") as mock_client_cls:
+        mock_client = mock_client_cls.return_value
+        mock_client.get_scoped_event_id.return_value = distinct_veditor_event_id
+        mock_client.sync_event.return_value = {"id": distinct_veditor_event_id}
+        mock_client.sync_talks.return_value = {"status": "ok"}
+        mock_client.attach_room_recording.return_value = {
+            "status": "ok",
+            "attached_count": 2,
+            "room": "Main Hall",
+            "event_id": distinct_veditor_event_id,
+            "talk_ids": [104, 105],
+        }
+
+        view = ConnectView.as_view()
+        response = view(request, organizer=event.organizer.slug, event=event.slug)
+
+        assert response.status_code == 302
+        assert mock_client.sync_event.called
+        mock_client.attach_room_recording.assert_called_once_with(
+            room="Main Hall",
+            event_id=distinct_veditor_event_id,
+            video_url="https://example.com/recordings/room1_day2.mp4",
+            video_file=None,
+            recording_start="2026-09-26T09:00:00Z",
+            target_date="2026-09-26",
+        )
+
+
+def test_connect_view_post_sync_schedule_calls_sync_event(event, organizer_user, rf):
+    """Verify ConnectView action=sync_schedule calls client.sync_event before syncing talks."""
+    request = setup_request(
+        rf.post(
+            reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug}),
+            data={"action": "sync_schedule"},
+        )
+    )
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    with patch("veditor.views.VEditorClient") as mock_client_cls:
+        mock_client = mock_client_cls.return_value
+        mock_client.get_scoped_event_id.return_value = event.id
+        mock_client.sync_event.return_value = {"id": event.id, "name": event.name}
+        mock_client.sync_talks.return_value = {"status": "ok", "imported_count": 3}
+
+        view = ConnectView.as_view()
+        response = view(request, organizer=event.organizer.slug, event=event.slug)
+
+        assert response.status_code == 302
+        mock_client.sync_event.assert_called_once_with(event=event)
+        mock_client.sync_talks.assert_called_once_with(event_id=event.id, talk_slots=[])
+
+
+def test_connect_view_post_sync_schedule_stops_on_sync_event_failure(event, organizer_user, rf):
+    """Verify ConnectView halts synchronization and reports error if sync_event fails."""
+    request = setup_request(
+        rf.post(
+            reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug}),
+            data={"action": "sync_schedule"},
+        )
+    )
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    with patch("veditor.views.VEditorClient") as mock_client_cls:
+        mock_client = mock_client_cls.return_value
+        mock_client.get_scoped_event_id.return_value = event.id
+        mock_client.sync_event.side_effect = VEditorError("VEditor server error updating event dates", status_code=500)
+
+        view = ConnectView.as_view()
+        response = view(request, organizer=event.organizer.slug, event=event.slug)
+
+        assert response.status_code == 302
+        assert mock_client.sync_event.called
+        assert not mock_client.sync_talks.called
+        messages = [str(m.message) for m in request._messages]
+        assert any("Failed to synchronize talks with VEditor" in m for m in messages)
+
+
+def test_connect_view_post_sync_schedule_creates_event_before_lookup(event, organizer_user, rf):
+    """Verify ConnectView sync_schedule uses ID returned by sync_event even when get_scoped_event_id would fail."""
+    request = setup_request(
+        rf.post(
+            reverse("plugins:veditor:connect", kwargs={"organizer": event.organizer.slug, "event": event.slug}),
+            data={"action": "sync_schedule"},
+        )
+    )
+    request.user = organizer_user
+    request.event = event
+    request.organizer = event.organizer
+
+    with patch("veditor.views.VEditorClient") as mock_client_cls:
+        mock_client = mock_client_cls.return_value
+        mock_client.sync_event.return_value = {"id": 999, "name": event.name}
+        mock_client.get_scoped_event_id.side_effect = VEditorEventNotFoundError("Event not found yet")
+        mock_client.sync_talks.return_value = {"status": "ok", "imported_count": 5}
+
+        view = ConnectView.as_view()
+        response = view(request, organizer=event.organizer.slug, event=event.slug)
+
+        assert response.status_code == 302
+        mock_client.sync_event.assert_called_once_with(event=event)
+        mock_client.sync_talks.assert_called_once_with(event_id=999, talk_slots=[])
+        assert not mock_client.get_scoped_event_id.called

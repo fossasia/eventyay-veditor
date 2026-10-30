@@ -165,6 +165,18 @@ class RoomRecordingAttachmentForm(forms.Form):
         ),
         help_text=_("Optional ISO-8601 start time if the recording started earlier or later than the first talk."),
     )
+    target_date = forms.DateField(
+        label=_("Target Session Date (Optional)"),
+        required=False,
+        widget=forms.DateInput(
+            attrs={
+                "class": "form-control",
+                "type": "date",
+                "placeholder": "YYYY-MM-DD",
+            }
+        ),
+        help_text=_("Optional: Target a specific event day (YYYY-MM-DD) for multi-day room recordings."),
+    )
 
     def __init__(self, *args: Any, event: Any = None, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -210,6 +222,10 @@ class RoomRecordingAttachmentForm(forms.Form):
                     )
             except ValueError:
                 self.add_error("recording_start", _("Recording start time must be a valid ISO-8601 formatted timestamp (e.g., 2026-09-25T09:00:00Z)."))
+
+        target_date = cleaned_data.get("target_date")
+        if target_date and hasattr(target_date, "isoformat"):
+            cleaned_data["target_date"] = target_date.isoformat()
 
         cleaned_data["video_url"] = video_url
         cleaned_data["video_file"] = video_file

@@ -105,6 +105,45 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
         context["talks_count"] = len(talk_slots)
         context["recorded_submission_ids"] = self.get_recorded_submission_ids(talk_slots)
 
+        start_date = getattr(event, "date_from", None)
+        end_date = getattr(event, "date_to", None)
+        event_duration_days = 1
+
+        tz_val = getattr(event, "timezone", None)
+        event_tz = None
+        if tz_val:
+            from datetime import tzinfo
+            from zoneinfo import ZoneInfo
+
+            if isinstance(tz_val, tzinfo):
+                event_tz = tz_val
+            elif isinstance(tz_val, str):
+                try:
+                    event_tz = ZoneInfo(tz_val.strip())
+                except Exception:
+                    event_tz = None
+
+        d_start_dt = start_date
+        d_end_dt = end_date
+        if event_tz:
+            if hasattr(start_date, "astimezone") and getattr(start_date, "tzinfo", None):
+                d_start_dt = start_date.astimezone(event_tz)
+            if hasattr(end_date, "astimezone") and getattr(end_date, "tzinfo", None):
+                d_end_dt = end_date.astimezone(event_tz)
+
+        d_start = d_start_dt.date() if hasattr(d_start_dt, "date") else d_start_dt
+        d_end = d_end_dt.date() if hasattr(d_end_dt, "date") else d_end_dt
+
+        if d_start and d_end:
+            if hasattr(d_start, "year") and hasattr(d_end, "year"):
+                event_duration_days = max(1, (d_end - d_start).days + 1)
+        elif d_start:
+            event_duration_days = 1
+
+        context["event_start_date"] = d_start
+        context["event_end_date"] = d_end
+        context["event_duration_days"] = event_duration_days
+
         # Pre-populate form with saved event settings or platform environment defaults
         saved_url = (
             (event.settings.get("veditor_api_base_url") if hasattr(event, "settings") else None)
@@ -271,7 +310,8 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
             talk_slots = self.get_talk_slots()
             try:
                 client = VEditorClient(event=event)
-                target_event_id = client.get_scoped_event_id()
+                sync_res = client.sync_event(event=event)
+                target_event_id = (sync_res.get("id") if isinstance(sync_res, dict) else None) or client.get_scoped_event_id()
                 res = client.sync_talks(event_id=target_event_id, talk_slots=talk_slots)
                 imported_count = res.get("imported_count", len(talk_slots)) if isinstance(res, dict) else len(talk_slots)
                 messages.success(
@@ -298,14 +338,16 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                 video_url = room_form.cleaned_data.get("video_url") or None
                 video_file = room_form.cleaned_data.get("video_file") or None
                 recording_start = room_form.cleaned_data.get("recording_start") or None
+                target_date = room_form.cleaned_data.get("target_date") or None
 
                 try:
                     client = VEditorClient(event=event)
-                    target_event_id = client.get_scoped_event_id()
 
                     # 1. Automatically ensure talks & room schedules are synchronized first!
                     talk_slots = self.get_talk_slots()
                     try:
+                        sync_res = client.sync_event(event=event)
+                        target_event_id = (sync_res.get("id") if isinstance(sync_res, dict) else None) or client.get_scoped_event_id()
                         client.sync_talks(event_id=target_event_id, talk_slots=talk_slots)
                     except (VEditorError, ValueError) as sync_exc:
                         logger.error("Auto-sync prior to room attachment failed for %s: %s", room_name, sync_exc)
@@ -320,14 +362,18 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                             )
                         )
 
+                    attach_kwargs = {
+                        "room": room_name,
+                        "event_id": target_event_id,
+                        "video_url": video_url,
+                        "video_file": video_file,
+                        "recording_start": recording_start,
+                    }
+                    if target_date:
+                        attach_kwargs["target_date"] = target_date
+
                     # 2. Attach recording via URL or uploaded file
-                    res = client.attach_room_recording(
-                        room=room_name,
-                        event_id=target_event_id,
-                        video_url=video_url,
-                        video_file=video_file,
-                        recording_start=recording_start,
-                    )
+                    res = client.attach_room_recording(**attach_kwargs)
                     attached_count = res.get("attached_count", 0) if isinstance(res, dict) else 0
                     talk_ids = res.get("talk_ids", []) if isinstance(res, dict) else []
                     if talk_ids:
@@ -426,8 +472,8 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
 
         try:
             client = VEditorClient(event=event)
-            # Auto-resolve target event ID from the event-scoped API key
-            target_event_id = client.get_scoped_event_id()
+            sync_res = client.sync_event(event=event)
+            target_event_id = (sync_res.get("id") if isinstance(sync_res, dict) else None) or client.get_scoped_event_id()
         except (VEditorError, ValueError) as exc:
             messages.error(
                 request,
@@ -627,6 +673,9 @@ class SpeakerReviewLaunchView(LoginRequiredMixin, View):
                 return HttpResponseRedirect(self.get_fallback_url(request, event_obj))
 
             try:
+                sync_res = client.sync_event(event=event_obj)
+                if isinstance(sync_res, dict) and sync_res.get("id"):
+                    target_event_id = sync_res["id"]
                 target_slot = getattr(submission, "slots", None)
                 slot_obj = target_slot.first() if target_slot and hasattr(target_slot, "first") else None
                 if slot_obj is None:

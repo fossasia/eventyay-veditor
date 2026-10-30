@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, tzinfo
 from typing import Any
+from zoneinfo import ZoneInfo
 
 
 def to_utc_isoformat(dt: datetime | None) -> str | None:
@@ -15,6 +16,106 @@ def to_utc_isoformat(dt: datetime | None) -> str | None:
     else:
         dt = dt.astimezone(UTC)
     return dt.isoformat()
+
+
+def to_iso_date(dt_val: Any, tz: tzinfo | None = None) -> str | None:
+    """Normalize a date, datetime, or date string to an ISO-8601 date string (YYYY-MM-DD)."""
+    if dt_val is None:
+        return None
+    if isinstance(dt_val, datetime):
+        if tz is not None and dt_val.tzinfo is not None:
+            dt_val = dt_val.astimezone(tz)
+        return dt_val.date().isoformat()
+    if isinstance(dt_val, date):
+        return dt_val.isoformat()
+    if isinstance(dt_val, str):
+        clean_val = dt_val.strip()
+        if not clean_val:
+            return None
+        if "T" in clean_val:
+            try:
+                parsed_dt = datetime.fromisoformat(clean_val.replace("Z", "+00:00"))
+                if tz is not None and parsed_dt.tzinfo is not None:
+                    parsed_dt = parsed_dt.astimezone(tz)
+                return parsed_dt.date().isoformat()
+            except Exception:
+                return clean_val.split("T")[0]
+        try:
+            return date.fromisoformat(clean_val).isoformat()
+        except Exception:
+            return clean_val
+    return None
+
+
+def serialize_event(event: Any) -> dict[str, Any]:
+    """Serialize an Eventyay Event into a VEditor event dictionary.
+
+    Extracts:
+    - name: event.name or title
+    - start_date: ISO-8601 date string (YYYY-MM-DD) from event.date_from or start_date
+    - end_date: ISO-8601 date string (YYYY-MM-DD) from event.date_to or end_date
+    - source: "eventyay"
+    - external_id: event.slug or str(event.id)
+    - speaker_magic_link_expire_hours: calculated from speaker_review_window_days setting (days * 24)
+    """
+    if isinstance(event, dict):
+        name = event.get("name", "")
+        date_from = event.get("date_from") or event.get("start_date")
+        date_to = event.get("date_to") or event.get("end_date")
+        slug = event.get("slug")
+        event_id = event.get("id")
+        settings_obj = event.get("settings")
+        tz_val = event.get("timezone")
+    else:
+        name = getattr(event, "name", "") or ""
+        date_from = getattr(event, "date_from", None) or getattr(event, "start_date", None)
+        date_to = getattr(event, "date_to", None) or getattr(event, "end_date", None)
+        slug = getattr(event, "slug", None)
+        event_id = getattr(event, "id", None)
+        settings_obj = getattr(event, "settings", None)
+        tz_val = getattr(event, "timezone", None)
+
+    event_tz: tzinfo | None = None
+    if tz_val:
+        if isinstance(tz_val, tzinfo):
+            event_tz = tz_val
+        elif isinstance(tz_val, str):
+            try:
+                event_tz = ZoneInfo(tz_val.strip())
+            except Exception:
+                event_tz = None
+
+    external_id = str(slug) if slug else (str(event_id) if event_id is not None else "")
+
+    start_date = to_iso_date(date_from, tz=event_tz)
+    end_date = to_iso_date(date_to, tz=event_tz)
+    if start_date and not end_date:
+        end_date = start_date
+
+    data: dict[str, Any] = {
+        "name": str(name),
+        "source": "eventyay",
+        "external_id": external_id,
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+
+    review_window_days = None
+    if settings_obj is not None:
+        if isinstance(settings_obj, dict):
+            review_window_days = settings_obj.get("speaker_review_window_days")
+        elif hasattr(settings_obj, "get"):
+            review_window_days = settings_obj.get("speaker_review_window_days")
+
+    if review_window_days is not None:
+        try:
+            days_int = int(review_window_days)
+            if days_int > 0:
+                data["speaker_magic_link_expire_hours"] = days_int * 24
+        except (ValueError, TypeError):
+            pass
+
+    return data
 
 
 def serialize_talk(talk_slot: Any, event_id: str | None = None) -> dict[str, Any]:

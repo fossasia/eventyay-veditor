@@ -30,3 +30,7 @@ class VEditorSyncError(VEditorError):
 
 class VEditorNetworkError(VEditorError):
     """Raised when network transport fails (timeouts, connection refused, 5xx server errors)."""
+
+
+class VEditorEventNotFoundError(VEditorError):
+    """Raised when an expected event is not found in VEditor."""

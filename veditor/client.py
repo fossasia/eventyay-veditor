@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -19,10 +19,11 @@ from .exceptions import (
     VEditorAuthError,
     VEditorConfigError,
     VEditorError,
+    VEditorEventNotFoundError,
     VEditorNetworkError,
     VEditorSyncError,
 )
-from .mappers import serialize_talk, serialize_talks
+from .mappers import serialize_event, serialize_talk, serialize_talks
 
 
 class VEditorClient:
@@ -280,6 +281,67 @@ class VEditorClient:
         payload = {"event_id": normalized_event_id, "talks": serialized}
         return self._request("POST", "/talks/schedule/import", json=payload)
 
+    def sync_event(self, event: Any | None = None) -> dict[str, Any]:
+        """Synchronize event date boundaries and metadata with VEditor.
+
+        If the event already exists in VEditor (matched via get_scoped_event_id),
+        calls PATCH /events/{event_id}. If not found, attempts POST /events.
+        """
+        target_event = event if event is not None else self.event
+        if target_event is None:
+            raise ValueError("Event instance is required to sync event metadata.")
+
+        payload = serialize_event(target_event)
+        target_event_id: int | None = None
+        orig_event = self.event
+        try:
+            self.event = target_event
+            try:
+                target_event_id = self.get_scoped_event_id()
+            except VEditorEventNotFoundError:
+                logger.debug("No existing VEditor event found for event sync; creating via POST /events.")
+        finally:
+            self.event = orig_event
+
+        if target_event_id is not None:
+            return self._request("PATCH", f"/events/{target_event_id}", json=payload)
+
+        # Event does not exist yet in VEditor; create it
+        return self._request("POST", "/events", json=payload)
+
+    def sync_full_schedule(self, event: Any | None = None, talk_slots: list[Any] | None = None) -> dict[str, Any]:
+        """Synchronize both event date metadata and talk slots to VEditor.
+
+        1. Synchronizes event metadata (start_date, end_date, name, external_id).
+        2. Resolves target VEditor event ID.
+        3. Upserts scheduled talk slots via POST /talks/schedule/import.
+        """
+        target_event = event if event is not None else self.event
+        if target_event is None:
+            raise ValueError("Event instance is required to sync full schedule.")
+
+        event_result = self.sync_event(event=target_event)
+        event_id = event_result.get("id") if isinstance(event_result, dict) else None
+        if event_id is None:
+            try:
+                event_id = self.get_scoped_event_id()
+            except Exception as exc:
+                logger.debug("Could not resolve scoped event ID following event sync: %s", exc)
+
+        if talk_slots is not None and event_id is not None:
+            talks_result = self.sync_talks(event_id=event_id, talk_slots=talk_slots)
+            imported_count = talks_result.get("imported_count", len(talk_slots)) if isinstance(talks_result, dict) else len(talk_slots)
+        else:
+            talks_result = {"status": "ok", "imported_count": 0}
+            imported_count = 0
+
+        return {
+            "status": "ok",
+            "event": event_result,
+            "talks": talks_result,
+            "imported_count": imported_count,
+        }
+
     def get_scoped_event_id(self) -> int:
         """Resolve the target event ID in VEditor from the event-scoped API key.
 
@@ -289,11 +351,6 @@ class VEditorClient:
         """
         response_data = self._request("GET", "/events")
         if isinstance(response_data, list) and response_data:
-            if len(response_data) == 1:
-                first_event = response_data[0]
-                if isinstance(first_event, dict) and "id" in first_event:
-                    return int(first_event["id"])
-
             if self.event is not None:
                 event_slug = getattr(self.event, "slug", None)
                 event_id = getattr(self.event, "id", None)
@@ -335,17 +392,23 @@ class VEditorClient:
                         response_data=response_data,
                     )
 
-                raise VEditorError(
-                    f"Multiple events returned by VEditor for API key, and cannot disambiguate for event '{event_slug}'.",
+                raise VEditorEventNotFoundError(
+                    f"No matching event found for '{event_slug or event_name}' in VEditor; cannot disambiguate.",
                     response_data=response_data,
                 )
+
+            # If self.event is None, only return if a single event exists for this API key
+            if len(response_data) == 1:
+                first_event = response_data[0]
+                if isinstance(first_event, dict) and "id" in first_event:
+                    return int(first_event["id"])
 
             raise VEditorError(
                 "Multiple events returned by VEditor API key but no event context provided to disambiguate.",
                 response_data=response_data,
             )
 
-        raise VEditorError("No event associated with this API key was found in VEditor.", response_data=response_data)
+        raise VEditorEventNotFoundError("No event associated with this API key was found in VEditor.", response_data=response_data)
 
     def request_sso_jwt(
         self,
@@ -402,6 +465,7 @@ class VEditorClient:
         relative_key: str | None = None,
         source_path: str | None = None,
         recording_start: str | datetime | None = None,
+        target_date: str | date | datetime | None = None,
     ) -> dict[str, Any]:
         """Attach a continuous room recording to all scheduled sessions in that room.
 
@@ -417,6 +481,7 @@ class VEditorClient:
             relative_key: Optional path to recording file relative to VEditor's ingest roots.
             source_path: Optional shared storage path to recording file accessible by VEditor.
             recording_start: Optional ISO-8601 string or datetime of when recording began.
+            target_date: Optional scheduled date (YYYY-MM-DD or date object) to scope recording to a specific day.
 
         Returns:
             Dict containing status, attached_count, room, event_id, talk_ids.
@@ -457,6 +522,15 @@ class VEditorClient:
             else:
                 rec_start_val = str(recording_start).strip()
 
+        target_date_val: str | None = None
+        if target_date is not None:
+            if isinstance(target_date, datetime):
+                target_date_val = target_date.date().isoformat()
+            elif isinstance(target_date, date):
+                target_date_val = target_date.isoformat()
+            else:
+                target_date_val = str(target_date).strip()
+
         # Handle multipart file upload
         if video_file is not None:
             data: dict[str, Any] = {"room": str(room).strip()}
@@ -464,6 +538,8 @@ class VEditorClient:
                 data["event_id"] = str(event_id)
             if rec_start_val:
                 data["recording_start"] = rec_start_val
+            if target_date_val:
+                data["target_date"] = target_date_val
             files = {"file": video_file}
             return self._request("POST", "/talks/room/attach-recording", data=data, files=files)
 
@@ -487,5 +563,8 @@ class VEditorClient:
 
         if rec_start_val:
             payload["recording_start"] = rec_start_val
+
+        if target_date_val:
+            payload["target_date"] = target_date_val
 
         return self._request("POST", "/talks/room/attach-recording", json=payload)

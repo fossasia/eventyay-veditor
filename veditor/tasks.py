@@ -617,3 +617,60 @@ def process_talk_published(
             "event_id": event_id,
             "talk_id": talk_id,
         }
+
+
+@task_decorator(
+    name="veditor.sync_event_schedule",
+    autoretry_for=(VEditorNetworkError,),
+    retry_backoff=True,
+    max_retries=3,
+)
+def sync_event_schedule_task(event_id: int | str) -> dict[str, Any]:
+    """Background task to sync event metadata and talk schedule to VEditor upon schedule release."""
+    logger.info("Executing sync_event_schedule_task for event_id=%s", event_id)
+    with scopes_disabled():
+        if Event is None:
+            return {"status": "error", "message": "Event model unavailable"}
+
+        event_obj = None
+        if str(event_id).isdigit():
+            event_obj = Event.objects.filter(id=int(event_id)).first()
+        if not event_obj:
+            event_obj = Event.objects.filter(slug=str(event_id)).first()
+
+        if not event_obj:
+            logger.warning("Event %s not found for schedule sync", event_id)
+            return {"status": "not_found", "message": f"Event {event_id} not found"}
+
+        try:
+            client = VEditorClient(event=event_obj)
+        except VEditorConfigError:
+            logger.info("VEditor not configured for event %s, skipping sync", event_obj.slug)
+            return {"status": "skipped", "message": "VEditor not configured"}
+
+        schedule = getattr(event_obj, "current_schedule", None) or getattr(event_obj, "wip_schedule", None)
+        if not schedule:
+            talk_slots = []
+        elif hasattr(schedule, "scheduled_talks"):
+            talks_qs = schedule.scheduled_talks
+            talk_slots = (
+                list(talks_qs.filter(submission__isnull=False).select_related("submission", "room").order_by("start"))
+                if hasattr(talks_qs, "filter")
+                else list(talks_qs)
+            )
+        elif hasattr(schedule, "talks"):
+            talk_slots = list(schedule.talks.filter(submission__isnull=False).select_related("submission", "room").order_by("start"))
+        else:
+            talk_slots = []
+
+        try:
+            return client.sync_full_schedule(event=event_obj, talk_slots=talk_slots)
+        except VEditorNetworkError:
+            logger.warning(
+                "Network error syncing schedule for event %s, retrying via Celery...",
+                event_obj.slug,
+            )
+            raise
+        except Exception as exc:
+            logger.exception("Failed to sync schedule for event %s: %s", event_obj.slug, exc)
+            return {"status": "error", "message": str(exc), "event_id": event_id}
