@@ -150,7 +150,7 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 In a separate terminal, start the VEditor background worker:
 ```bash
-uv run python -m app.worker
+uv run python -m app.run_worker
 ```
 
 ### 3. Install the Plugin in Eventyay
