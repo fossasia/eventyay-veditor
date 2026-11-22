@@ -67,7 +67,7 @@ class VEditorRecordingProvider(BaseRecordingProvider):
                 logger.debug(
                     "Error looking up resources for submission %s: %s",
                     getattr(submission, "code", None),
-                    exc,
+                    type(exc).__name__,
                 )
 
         if not video_url:

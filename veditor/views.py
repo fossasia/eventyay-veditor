@@ -368,7 +368,7 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                     _("Successfully synchronized {count} talk(s) with VEditor.").format(count=imported_count),
                 )
             except (VEditorError, ValueError) as exc:
-                logger.error("Failed to synchronize talks for event %s: %s", event.slug, exc)
+                logger.error("Failed to synchronize talks for event %s: %s", event.slug, type(exc).__name__)
                 log_operation(
                     "schedule.sync",
                     OUTCOME_FAILURE,
@@ -407,7 +407,7 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                         target_event_id = (sync_res.get("id") if isinstance(sync_res, dict) else None) or client.get_scoped_event_id()
                         client.sync_talks(event_id=target_event_id, talk_slots=talk_slots)
                     except (VEditorError, ValueError) as sync_exc:
-                        logger.error("Auto-sync prior to room attachment failed for %s: %s", room_name, sync_exc)
+                        logger.error("Auto-sync prior to room attachment failed for %s: %s", room_name, type(sync_exc).__name__)
                         log_operation(
                             "recording.attach",
                             OUTCOME_FAILURE,
@@ -454,7 +454,7 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                     log_operation("recording.attach", OUTCOME_SUCCESS, backend="veditor", event_id=event_id, user_id=user_id)
                     messages.success(request, msg)
                 except (VEditorError, ValueError) as exc:
-                    logger.error("Failed attaching room recording for room %s: %s", room_name, exc)
+                    logger.error("Failed attaching room recording for room %s: %s", room_name, type(exc).__name__)
                     log_operation(
                         "recording.attach",
                         OUTCOME_FAILURE,
@@ -534,7 +534,7 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                         )
                     )
                 except Exception as exc:
-                    logger.warning("Direct dispatch failed, falling back to celery: %s", exc)
+                    logger.warning("Direct dispatch failed, falling back to celery: %s", type(exc).__name__)
                     log_operation(
                         "review_link.dispatch",
                         OUTCOME_FAILURE,
@@ -570,7 +570,7 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                         force=True,
                     )
                 except Exception as exc:
-                    logger.exception("Speaker review dispatch failed: %s", exc)
+                    logger.error("Speaker review dispatch failed: %s", type(exc).__name__)
                     log_operation(
                         "review_link.dispatch",
                         OUTCOME_FAILURE,
@@ -755,7 +755,7 @@ class SpeakerReviewLaunchView(LoginRequiredMixin, View):
                                 Submission.objects.filter(id=int(talk_code)).select_related("event", "event__organizer").prefetch_related("speakers").first()
                             )
             except Exception as db_exc:
-                logger.debug("Could not query submission from database: %s", db_exc)
+                logger.debug("Could not query submission from database: %s", type(db_exc).__name__)
 
         if not submission:
             log_operation(
@@ -822,7 +822,7 @@ class SpeakerReviewLaunchView(LoginRequiredMixin, View):
         try:
             client = VEditorClient(event=event_obj)
         except VEditorConfigError as exc:
-            logger.warning("VEditor client configuration error for %s: %s", getattr(event_obj, "slug", ""), exc)
+            logger.warning("VEditor client configuration error for %s: %s", getattr(event_obj, "slug", ""), type(exc).__name__)
             log_operation(
                 "review_link.launch",
                 OUTCOME_FAILURE,
@@ -845,7 +845,7 @@ class SpeakerReviewLaunchView(LoginRequiredMixin, View):
                 if scoped:
                     target_event_id = str(scoped)
         except Exception as scoped_exc:
-            logger.debug("Could not resolve scoped event ID: %s", scoped_exc)
+            logger.debug("Could not resolve scoped event ID: %s", type(scoped_exc).__name__)
 
         display_name = getattr(user, "fullname", None) or getattr(user, "name", None)
         if not display_name and hasattr(user, "get_display_name"):
@@ -872,7 +872,7 @@ class SpeakerReviewLaunchView(LoginRequiredMixin, View):
                 logger.warning(
                     "Failed to request speaker SSO JWT for submission %s: %s",
                     submission_code,
-                    exc,
+                    type(exc).__name__,
                 )
                 log_operation(
                     "review_link.launch",
@@ -911,11 +911,11 @@ class SpeakerReviewLaunchView(LoginRequiredMixin, View):
                 else:
                     token, sso_data = str(sso_res), {}
             except Exception as retry_exc:
-                logger.exception(
+                logger.error(
                     "Failed to establish speaker SSO session for submission %s (initial error: %s, retry error: %s)",
                     submission_code,
-                    exc,
-                    retry_exc,
+                    type(exc).__name__,
+                    type(retry_exc).__name__,
                 )
                 log_operation(
                     "review_link.launch",

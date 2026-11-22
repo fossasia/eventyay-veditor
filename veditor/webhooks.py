@@ -250,9 +250,8 @@ class WebhookView(View):
                     raise
                 except Exception as sub_exc:  # noqa: BLE001
                     logger.debug(
-                        "Failed looking up event via submission external_id %s: %s",
-                        external_id,
-                        sub_exc,
+                        "Failed looking up event via submission external_id: %s",
+                        type(sub_exc).__name__,
                     )
 
             if event_obj:
@@ -260,7 +259,7 @@ class WebhookView(View):
                 if hasattr(event_obj, "settings"):
                     secret = event_obj.settings.get("veditor_webhook_secret")
         except DatabaseError as exc:
-            logger.error("Database error looking up event-level webhook secret for event %s: %s", event_id, exc)
+            logger.error("Database error looking up event-level webhook secret: %s", type(exc).__name__)
             log_operation(
                 "webhook.inbound",
                 OUTCOME_FAILURE,
@@ -270,7 +269,7 @@ class WebhookView(View):
             )
             return JsonResponse({"error": "Database error looking up event secret"}, status=500)
         except Exception as exc:  # noqa: BLE001
-            logger.debug("Failed looking up event-level webhook secret for event %s: %s", event_id, exc)
+            logger.debug("Failed looking up event-level webhook secret: %s", type(exc).__name__)
 
         if not secret:
             secret = (
@@ -433,9 +432,8 @@ class WebhookView(View):
                     except Exception as exc:  # noqa: BLE001
                         logger.warning(
                             "Failed resolving client base URL for talk.published: event_id=%s, error=%s",
-                            event_id,
-                            exc,
-                            exc_info=True,
+                            log_event_id,
+                            type(exc).__name__,
                         )
 
                     if not resolved_base and getattr(settings, "configured", False):
@@ -451,9 +449,8 @@ class WebhookView(View):
                         except Exception as exc:  # noqa: BLE001
                             logger.warning(
                                 "Failed resolving client instance base URL for event_id=%s in webhook: %s",
-                                event_id,
-                                exc,
-                                exc_info=True,
+                                log_event_id,
+                                type(exc).__name__,
                             )
 
                     if resolved_base and str(resolved_base).strip():
@@ -463,8 +460,8 @@ class WebhookView(View):
                 if parsed_video.scheme not in ("http", "https") or not parsed_video.netloc:
                     logger.warning(
                         "Rejected talk.published webhook due to invalid or unresolvable video_url: event_id=%s, talk_id=%s",
-                        event_id,
-                        talk_id,
+                        log_event_id,
+                        log_talk_id,
                     )
                     log_operation(
                         "webhook.inbound",
@@ -508,7 +505,7 @@ class WebhookView(View):
                     raw_payload=payload,
                 )
         except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to enqueue %s task: %s", event_type, exc)
+            logger.error("Failed to enqueue %s task: %s", event_type, type(exc).__name__)
             log_operation(
                 "webhook.inbound",
                 OUTCOME_FAILURE,

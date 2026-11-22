@@ -367,7 +367,7 @@ class VEditorClient:
             try:
                 event_id = self.get_scoped_event_id()
             except Exception as exc:
-                logger.debug("Could not resolve scoped event ID following event sync: %s", exc)
+                logger.debug("Could not resolve scoped event ID following event sync: %s", type(exc).__name__)
 
         if talk_slots is not None and event_id is not None:
             talks_result = self.sync_talks(event_id=event_id, talk_slots=talk_slots)
@@ -554,7 +554,7 @@ class VEditorClient:
             try:
                 event_id = self.get_scoped_event_id()
             except Exception as exc:
-                logger.debug("Could not auto-resolve scoped event ID: %s", exc)
+                logger.debug("Could not auto-resolve scoped event ID: %s", type(exc).__name__)
 
         rec_start_val: str | None = None
         if recording_start is not None:

@@ -191,7 +191,7 @@ def process_talk_approved(
                 if scoped:
                     target_event_id = str(scoped)
         except Exception as scoped_exc:
-            logger.debug("Could not resolve scoped event ID: %s", scoped_exc)
+            logger.debug("Could not resolve scoped event ID: %s", type(scoped_exc).__name__)
 
         # If talk_id is non-numeric (e.g. passed from submission code), auto-resolve integer ID via VEditor sync
         if not resolved_talk_id.isdigit():
@@ -202,7 +202,7 @@ def process_talk_approved(
                     resolved_talk_id = str(sync_resp["id"])
                     logger.info("Resolved VEditor integer talk_id=%s for submission %s", resolved_talk_id, submission.code)
             except Exception as sync_exc:
-                logger.warning("Could not auto-resolve integer talk_id from VEditor for %s: %s", submission.code, sync_exc)
+                logger.warning("Could not auto-resolve integer talk_id from VEditor for %s: %s", submission.code, type(sync_exc).__name__)
 
         missing_email_speakers: list[str] = []
         task_id_val = getattr(getattr(self, "request", None), "id", None)
@@ -449,8 +449,7 @@ def process_talk_published(
                         logger.warning(
                             "Failed resolving base URL via VEditorClient for event_id=%s: %s",
                             event_id,
-                            exc,
-                            exc_info=True,
+                            type(exc).__name__,
                         )
                     if not resolved_base and event_obj is not None and hasattr(event_obj, "settings"):
                         resolved_base = event_obj.settings.get("veditor_api_base_url") or event_obj.settings.get("veditor_base_url")
@@ -595,7 +594,7 @@ def process_talk_published(
                         logger.warning(
                             "Failed updating recording_url on submission %s: %s",
                             getattr(submission, "code", None),
-                            exc,
+                            type(exc).__name__,
                         )
 
             logger.info(
@@ -619,11 +618,11 @@ def process_talk_published(
         )
         raise
     except Exception as exc:  # noqa: BLE001
-        logger.exception(
+        logger.error(
             "Failed processing talk.published for talk_id=%s, event_id=%s: %s",
             talk_id,
             event_id,
-            exc,
+            type(exc).__name__,
         )
         return {
             "status": "error",
@@ -694,5 +693,5 @@ def sync_event_schedule_task(self: Any = None, event_id: int | str | None = None
             )
             raise
         except Exception as exc:
-            logger.exception("Failed to sync schedule for event %s: %s", event_obj.slug, exc)
+            logger.error("Failed to sync schedule for event %s: %s", event_obj.slug, type(exc).__name__)
             return {"status": "error", "message": str(exc), "event_id": event_id}

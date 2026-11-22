@@ -123,7 +123,7 @@ if schedule_release is not None:
                     log_operation("schedule_sync.dispatch", OUTCOME_SUCCESS, backend="veditor", event_id=event_id)
                     return
                 except Exception as exc:
-                    logger.warning("Inline sync_event_schedule_task failed for event %s: %s", event_id, exc)
+                    logger.warning("Inline sync_event_schedule_task failed for event %s: %s", event_id, type(exc).__name__)
 
             try:
                 sync_event_schedule_task.delay(event_id=event_id)
@@ -132,13 +132,13 @@ if schedule_release is not None:
                 logger.warning(
                     "Failed to enqueue sync_event_schedule_task.delay for %s: %s. Falling back to synchronous execution.",
                     event_id,
-                    delay_exc,
+                    type(delay_exc).__name__,
                 )
                 try:
                     sync_event_schedule_task(event_id=event_id)
                     log_operation("schedule_sync.dispatch", OUTCOME_SUCCESS, backend="veditor", event_id=event_id)
                 except Exception as sync_exc:
-                    logger.warning("Synchronous fallback for sync_event_schedule_task failed for %s: %s", event_id, sync_exc)
+                    logger.warning("Synchronous fallback for sync_event_schedule_task failed for %s: %s", event_id, type(sync_exc).__name__)
                     log_operation(
                         "schedule_sync.dispatch",
                         OUTCOME_FAILURE,
