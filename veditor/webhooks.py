@@ -7,6 +7,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -26,6 +27,17 @@ from .tasks import process_talk_approved, process_talk_published
 logger = logging.getLogger(__name__)
 
 TIMESTAMP_TOLERANCE_SECONDS = 300  # 5 minutes replay tolerance
+_WEBHOOK_DOMAIN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+
+def _validated_webhook_id(value: Any) -> int | str | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and _WEBHOOK_DOMAIN_ID.fullmatch(value):
+        return value
+    return None
 
 
 def parse_timestamp(value: Any) -> float | None:
@@ -150,9 +162,6 @@ class WebhookView(View):
             )
             return JsonResponse({"error": "Payload must be a JSON object"}, status=400)
 
-        event_id = payload.get("event_id")
-        talk_id = payload.get("talk_id")
-
         # Extract timestamp: prioritize signature header timestamp (bound cryptographically in v1 scheme)
         # and fall back to payload body timestamp for raw body schemes
         header_ts = None
@@ -170,8 +179,6 @@ class WebhookView(View):
                 OUTCOME_FAILURE,
                 backend="veditor",
                 error_code="missing_timestamp",
-                event_id=event_id,
-                object_id=talk_id,
                 status=400,
             )
             return JsonResponse({"error": "Missing required timestamp for replay protection"}, status=400)
@@ -183,8 +190,6 @@ class WebhookView(View):
                 OUTCOME_FAILURE,
                 backend="veditor",
                 error_code="stale_timestamp",
-                event_id=event_id,
-                object_id=talk_id,
                 status=400,
             )
             return JsonResponse(
@@ -195,6 +200,8 @@ class WebhookView(View):
         # Resolve webhook shared secret: event-scoped secret takes precedence
         secret = None
         event_obj = None
+        event_id = payload.get("event_id")
+        talk_id = payload.get("talk_id")
         external_id = payload.get("external_id")
         try:
             from eventyay.base.models import Event
@@ -259,8 +266,6 @@ class WebhookView(View):
                 OUTCOME_FAILURE,
                 backend="veditor",
                 error_code="database_error",
-                event_id=event_id,
-                object_id=talk_id,
                 status=500,
             )
             return JsonResponse({"error": "Database error looking up event secret"}, status=500)
@@ -281,8 +286,6 @@ class WebhookView(View):
                 OUTCOME_FAILURE,
                 backend="veditor",
                 error_code="missing_secret",
-                event_id=event_id,
-                object_id=talk_id,
                 status=500,
             )
             return JsonResponse({"error": "Webhook secret not configured on server"}, status=500)
@@ -294,11 +297,12 @@ class WebhookView(View):
                 OUTCOME_FAILURE,
                 backend="veditor",
                 error_code="signature_invalid",
-                event_id=event_id,
-                object_id=talk_id,
                 status=401,
             )
             return JsonResponse({"error": "Invalid webhook signature"}, status=401)
+
+        log_event_id = _validated_webhook_id(event_id)
+        log_talk_id = _validated_webhook_id(talk_id)
 
         # Extract and validate event signal details
         event_type = payload.get("event") or "talk.approved"
@@ -307,8 +311,8 @@ class WebhookView(View):
                 "webhook.inbound",
                 OUTCOME_SUCCESS,
                 backend="veditor",
-                event_id=event_id,
-                object_id=talk_id,
+                event_id=log_event_id,
+                object_id=log_talk_id,
                 status=200,
             )
             return JsonResponse({"status": "pong", "message": "Webhook verified"}, status=200)
@@ -318,8 +322,8 @@ class WebhookView(View):
                 "webhook.inbound",
                 OUTCOME_SUCCESS,
                 backend="veditor",
-                event_id=event_id,
-                object_id=talk_id,
+                event_id=log_event_id,
+                object_id=log_talk_id,
                 status=200,
             )
             return JsonResponse({"status": "accepted", "message": "Preview event acknowledged"}, status=200)
@@ -330,14 +334,15 @@ class WebhookView(View):
                 OUTCOME_FAILURE,
                 backend="veditor",
                 error_code="unsupported_event",
-                event_id=event_id,
-                object_id=talk_id,
+                event_id=log_event_id,
+                object_id=log_talk_id,
                 status=400,
             )
             return JsonResponse({"error": f"Unsupported webhook event type: {event_type}"}, status=400)
 
         talk_id = payload.get("talk_id")
         external_id = payload.get("external_id")
+        log_talk_id = _validated_webhook_id(talk_id)
 
         if talk_id is None or talk_id == "" or event_id is None or event_id == "":
             log_operation(
@@ -345,8 +350,8 @@ class WebhookView(View):
                 OUTCOME_FAILURE,
                 backend="veditor",
                 error_code="missing_fields",
-                event_id=event_id,
-                object_id=talk_id,
+                event_id=log_event_id,
+                object_id=log_talk_id,
                 status=400,
             )
             return JsonResponse({"error": "Missing required fields: event_id and talk_id"}, status=400)
@@ -360,8 +365,8 @@ class WebhookView(View):
                     OUTCOME_FAILURE,
                     backend="veditor",
                     error_code="invalid_video_url",
-                    event_id=event_id,
-                    object_id=talk_id,
+                    event_id=log_event_id,
+                    object_id=log_talk_id,
                     status=400,
                 )
                 return JsonResponse({"error": "Missing or invalid video_url for talk.published event"}, status=400)
@@ -372,8 +377,8 @@ class WebhookView(View):
                     OUTCOME_FAILURE,
                     backend="veditor",
                     error_code="invalid_video_url",
-                    event_id=event_id,
-                    object_id=talk_id,
+                    event_id=log_event_id,
+                    object_id=log_talk_id,
                     status=400,
                 )
                 return JsonResponse({"error": "Protocol-relative video_url is not allowed"}, status=400)
@@ -389,8 +394,8 @@ class WebhookView(View):
                         OUTCOME_FAILURE,
                         backend="veditor",
                         error_code="invalid_video_url",
-                        event_id=event_id,
-                        object_id=talk_id,
+                        event_id=log_event_id,
+                        object_id=log_talk_id,
                         status=400,
                     )
                     return JsonResponse({"error": "Cannot resolve relative video_url: VEditor base URL is not configured"}, status=400)
@@ -401,8 +406,8 @@ class WebhookView(View):
                         OUTCOME_FAILURE,
                         backend="veditor",
                         error_code="invalid_video_url",
-                        event_id=event_id,
-                        object_id=talk_id,
+                        event_id=log_event_id,
+                        object_id=log_talk_id,
                         status=400,
                     )
                     return JsonResponse({"error": "Configured VEditor base URL is invalid"}, status=400)
@@ -412,8 +417,8 @@ class WebhookView(View):
                         OUTCOME_FAILURE,
                         backend="veditor",
                         error_code="invalid_video_url",
-                        event_id=event_id,
-                        object_id=talk_id,
+                        event_id=log_event_id,
+                        object_id=log_talk_id,
                         status=400,
                     )
                     return JsonResponse({"error": "Configured VEditor base URL must not contain credentials"}, status=400)
@@ -466,8 +471,8 @@ class WebhookView(View):
                         OUTCOME_FAILURE,
                         backend="veditor",
                         error_code="invalid_video_url",
-                        event_id=event_id,
-                        object_id=talk_id,
+                        event_id=log_event_id,
+                        object_id=log_talk_id,
                         status=400,
                     )
                     return JsonResponse({"error": "video_url must be a valid HTTP or HTTPS URL with host"}, status=400)
@@ -478,8 +483,8 @@ class WebhookView(View):
                     OUTCOME_FAILURE,
                     backend="veditor",
                     error_code="missing_external_id",
-                    event_id=event_id,
-                    object_id=talk_id,
+                    event_id=log_event_id,
+                    object_id=log_talk_id,
                     status=400,
                 )
                 return JsonResponse({"error": "Missing or invalid external_id for talk.published event"}, status=400)
@@ -509,8 +514,8 @@ class WebhookView(View):
                 OUTCOME_FAILURE,
                 backend="veditor",
                 error_code="enqueue_failed",
-                event_id=event_id,
-                object_id=talk_id,
+                event_id=log_event_id,
+                object_id=log_talk_id,
                 status=500,
             )
             return JsonResponse({"error": "Failed to enqueue task"}, status=500)
@@ -519,8 +524,8 @@ class WebhookView(View):
             "webhook.inbound",
             OUTCOME_SUCCESS,
             backend="veditor",
-            event_id=event_id,
-            object_id=talk_id,
+            event_id=log_event_id,
+            object_id=log_talk_id,
             status=200,
         )
         return JsonResponse({"status": "accepted"}, status=200)

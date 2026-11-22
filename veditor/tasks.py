@@ -264,7 +264,12 @@ def process_talk_approved(
                 )
                 raise
             except (VEditorError, ValueError) as exc:
-                logger.exception("Failed to generate speaker SSO token for talk %s (speaker_id=%s): %s", resolved_talk_id, speaker_pk, exc)
+                logger.error(
+                    "Failed to generate speaker SSO token for talk %s (speaker_id=%s, error=%s)",
+                    resolved_talk_id,
+                    speaker_pk,
+                    type(exc).__name__,
+                )
                 failed_recipients.append({"email": speaker_email, "error": str(exc)})
                 continue
 

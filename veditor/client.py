@@ -243,7 +243,7 @@ class VEditorClient:
             )
             raise VEditorNetworkError(f"VEditor network transport error: {exc}") from exc
 
-        failed = response.status_code >= 400
+        failed = not (200 <= response.status_code < 300)
         log_operation(
             "connection.request",
             OUTCOME_FAILURE if failed else OUTCOME_SUCCESS,

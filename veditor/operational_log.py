@@ -20,6 +20,7 @@ try:
     from eventyay.base.operational_logging import (
         bind_job_id as _host_bind_job_id,
         get_job_id as _host_get_job_id,
+        get_request_id as _host_get_request_id,
         log_event as _HOST_LOG_EVENT,
         reset_job_id as _host_reset_job_id,
     )
@@ -27,6 +28,7 @@ except Exception:
     _HOST_LOG_EVENT = None
     _host_bind_job_id = None
     _host_get_job_id = None
+    _host_get_request_id = None
     _host_reset_job_id = None
 
 OUTCOME_SUCCESS = "success"
@@ -35,6 +37,7 @@ OUTCOME_FAILURE = "failure"
 _SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _LOGGER = logging.getLogger("eventyay.plugins")
 _job_id: ContextVar[str | None] = ContextVar("veditor_job_id", default=None)
+_request_id: ContextVar[str | None] = ContextVar("veditor_request_id", default=None)
 
 _INT_FIELDS = frozenset(
     {
@@ -50,6 +53,7 @@ _IDENTIFIER_FIELDS = frozenset(
         "backend",
         "job_name",
         "job_id",
+        "request_id",
     }
 )
 _ID_FIELDS = frozenset({"event_id", "object_id"})
@@ -88,6 +92,18 @@ def _clean(fields):
     return extra
 
 
+def _current_correlation_id(local_var, host_getter):
+    val = _safe_identifier(local_var.get())
+    if val is not None:
+        return val
+    if host_getter is not None:
+        try:
+            return _safe_identifier(host_getter())
+        except Exception:
+            return None
+    return None
+
+
 def log_operation(action, outcome, **fields):
     """Emit one allowlisted operational line. Failures are swallowed."""
     try:
@@ -98,9 +114,13 @@ def log_operation(action, outcome, **fields):
         level = logging.WARNING if outcome == OUTCOME_FAILURE else logging.INFO
         payload = _clean(fields)
         if "job_id" not in payload:
-            current_job_id = _safe_identifier(_job_id.get())
+            current_job_id = _current_correlation_id(_job_id, _host_get_job_id)
             if current_job_id is not None:
                 payload["job_id"] = current_job_id
+        if "request_id" not in payload:
+            current_request_id = _current_correlation_id(_request_id, _host_get_request_id)
+            if current_request_id is not None:
+                payload["request_id"] = current_request_id
         if _HOST_LOG_EVENT is not None:
             try:
                 _HOST_LOG_EVENT("plugins", action, outcome, level=level, **payload)
@@ -207,10 +227,13 @@ def traced_job(job_name):
                         duration_ms=_elapsed_ms(started),
                     )
                     raise
+                status_val = result.get("status") if isinstance(result, dict) else None
+                returned_error = status_val in ("error", "failed")
                 log_operation(
                     "job.finish",
-                    OUTCOME_SUCCESS,
+                    OUTCOME_FAILURE if returned_error else OUTCOME_SUCCESS,
                     job_name=job_name,
+                    error_code="task_error" if returned_error else None,
                     event_id=event_id,
                     object_id=object_id,
                     job_id=job_id,

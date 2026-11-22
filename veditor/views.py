@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 from datetime import tzinfo
@@ -55,11 +56,39 @@ def _user_log_id(request: Any) -> int | None:
     return None
 
 
+def _is_dispatch_failed(result: Any) -> bool:
+    if not isinstance(result, dict):
+        return False
+    return result.get("status") == "error" or (result.get("sent_count", 0) == 0 and bool(result.get("failed")))
+
+
 class ConnectView(EventPermissionRequiredMixin, TemplateView):
     """View to view event sync status and launch VEditor with single-click SSO."""
 
     permission = "can_change_event_settings"
     template_name = "veditor/connect.html"
+
+    @classmethod
+    def as_view(cls, **initkwargs: Any):
+        view = super().as_view(**initkwargs)
+
+        def _wrapped(request, *args: Any, **kwargs: Any):
+            try:
+                return view(request, *args, **kwargs)
+            except PermissionDenied:
+                user = getattr(request, "user", None)
+                if user is not None and getattr(user, "is_authenticated", False):
+                    log_operation(
+                        "permission.denied",
+                        OUTCOME_FAILURE,
+                        backend="veditor",
+                        error_code="forbidden",
+                        event_id=_event_log_id(getattr(request, "event", None)),
+                        user_id=_user_log_id(request),
+                    )
+                raise
+
+        return functools.update_wrapper(_wrapped, view)
 
     def get_talk_slots(self) -> list[TalkSlot]:
         """Fetch all scheduled and confirmed talk slots for the current active schedule."""
@@ -487,7 +516,7 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                         external_id=external_id,
                         force=True,
                     )
-                    dispatch_failed = isinstance(result, dict) and result.get("status") == "error"
+                    dispatch_failed = _is_dispatch_failed(result)
                     log_operation(
                         "review_link.dispatch",
                         OUTCOME_FAILURE if dispatch_failed else OUTCOME_SUCCESS,
@@ -556,7 +585,7 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                         _("Failed to dispatch speaker review link: {error}").format(error=str(exc)),
                     )
                 else:
-                    dispatch_failed = isinstance(result, dict) and result.get("status") == "error"
+                    dispatch_failed = _is_dispatch_failed(result)
                     log_operation(
                         "review_link.dispatch",
                         OUTCOME_FAILURE if dispatch_failed else OUTCOME_SUCCESS,

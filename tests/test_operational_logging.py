@@ -14,6 +14,7 @@ import pytest
 
 import veditor.operational_log as operational_log
 from veditor.client import VEditorClient
+from veditor.exceptions import VEditorError
 from veditor.operational_log import (
     OUTCOME_FAILURE,
     OUTCOME_SUCCESS,
@@ -435,3 +436,206 @@ def test_speaker_review_launch_view_logs_permission_denied_and_success(captured)
     assert "speaker@example.com" not in blob
     assert "secret-jwt-token" not in blob
     assert "Speaker Name" not in blob
+
+
+def test_request_id_correlation_in_fallback_logger(captured, monkeypatch):
+    token = operational_log._request_id.set("req-abc-123")
+    try:
+        log_operation("connection.request", OUTCOME_SUCCESS, backend="veditor")
+    finally:
+        operational_log._request_id.reset(token)
+
+    assert captured[-1][2]["request_id"] == "req-abc-123"
+
+    monkeypatch.setattr(operational_log, "_host_get_request_id", lambda: "host-req-456")
+    log_operation("connection.request", OUTCOME_SUCCESS, backend="veditor")
+    assert captured[-1][2]["request_id"] == "host-req-456"
+
+
+def test_traced_job_logs_returned_error_status_as_failure(captured):
+    @traced_job("veditor.talk_published")
+    def work(event_id=None, talk_id=None):
+        return {"status": "error", "message": "raw secret details"}
+
+    res = work(event_id=7, talk_id="TALK-7")
+    assert res == {"status": "error", "message": "raw secret details"}
+    assert [item[1] for item in captured] == ["job.start", "job.finish"]
+    finish_extra = captured[1][2]
+    assert finish_extra["outcome"] == "failure"
+    assert finish_extra["error_code"] == "task_error"
+    assert "raw secret details" not in str(finish_extra)
+
+
+def test_client_request_treats_redirect_as_failure(captured):
+    response = SimpleNamespace(status_code=302, text="Found", json=lambda: {})
+    session = MagicMock()
+    session.headers = {}
+    session.request.return_value = response
+
+    client = VEditorClient(
+        base_url="https://veditor.example.invalid",
+        api_key="super-secret-api-key",
+        session=session,
+        event=SimpleNamespace(id=42),
+    )
+    with pytest.raises(VEditorError):
+        client._request("GET", "/events")
+
+    assert captured[-1][1] == "connection.request"
+    assert captured[-1][2]["outcome"] == "failure"
+    assert captured[-1][2]["status"] == 302
+    assert captured[-1][2]["error_code"] == "http_error"
+
+
+def test_webhook_does_not_log_unvalidated_identifiers_before_hmac(captured):
+    django = pytest.importorskip("django")
+    assert django is not None
+    from django.test import RequestFactory
+
+    from veditor.webhooks import WebhookView
+
+    rf = RequestFactory()
+    view = WebhookView.as_view()
+
+    # 1. Pre-auth missing_timestamp with PII-like talk_id must NOT log event_id or object_id
+    payload = {
+        "event": "talk.approved",
+        "event_id": 999,
+        "talk_id": "Alice.Smith",
+    }
+    req = rf.post(
+        "/api/v1/veditor/webhook/",
+        data=json.dumps(payload).encode("utf-8"),
+        content_type="application/json",
+        HTTP_X_VEDITOR_SIGNATURE="sha256=deadbeef",
+    )
+    resp = view(req)
+    assert resp.status_code == 400
+    assert len(captured) == 1
+    assert captured[0][2]["error_code"] == "missing_timestamp"
+    assert "event_id" not in captured[0][2]
+    assert "object_id" not in captured[0][2]
+    assert "Alice.Smith" not in str(captured[0][2])
+
+    captured.clear()
+
+    # 2. Pre-auth signature_invalid must NOT log event_id or object_id
+    payload2 = {
+        "event": "talk.approved",
+        "event_id": 999,
+        "talk_id": "Alice.Smith",
+        "timestamp": time.time(),
+    }
+    req2 = rf.post(
+        "/api/v1/veditor/webhook/",
+        data=json.dumps(payload2).encode("utf-8"),
+        content_type="application/json",
+        HTTP_X_VEDITOR_SIGNATURE="sha256=deadbeef",
+    )
+    with patch("veditor.webhooks.settings") as mock_settings:
+        mock_settings.VEDITOR_WEBHOOK_SECRET = "whsec-real"
+        resp2 = view(req2)
+    assert resp2.status_code == 401
+    assert len(captured) == 1
+    assert captured[0][2]["error_code"] == "signature_invalid"
+    assert "event_id" not in captured[0][2]
+    assert "object_id" not in captured[0][2]
+    assert "Alice.Smith" not in str(captured[0][2])
+
+
+def test_connect_view_as_view_logs_authenticated_permission_denied_only(captured):
+    django = pytest.importorskip("django")
+    assert django is not None
+    from django.core.exceptions import PermissionDenied
+    from django.test import RequestFactory
+
+    from veditor.views import ConnectView
+
+    rf = RequestFactory()
+    view_fn = ConnectView.as_view()
+    event = SimpleNamespace(id=42, slug="conf-42", organizer=SimpleNamespace(slug="org-42"))
+
+    # Authenticated without permission -> logs permission.denied
+    auth_user = MagicMock()
+    auth_user.is_authenticated = True
+    auth_user.pk = 77
+    auth_user.has_event_permission.return_value = False
+    req1 = rf.get("/common/event/org-42/conf-42/veditor/")
+    req1.user = auth_user
+    req1.event = event
+    req1.organizer = event.organizer
+
+    with pytest.raises(PermissionDenied):
+        view_fn(req1)
+
+    assert len(captured) == 1
+    assert captured[0][1] == "permission.denied"
+    assert captured[0][2]["outcome"] == "failure"
+    assert captured[0][2]["error_code"] == "forbidden"
+    assert captured[0][2]["event_id"] == 42
+    assert captured[0][2]["user_id"] == 77
+
+    captured.clear()
+
+    # Anonymous user -> raises PermissionDenied without emitting permission.denied
+    anon_user = SimpleNamespace(is_authenticated=False)
+    req2 = rf.get("/common/event/org-42/conf-42/veditor/")
+    req2.user = anon_user
+    req2.event = event
+    req2.organizer = event.organizer
+
+    with pytest.raises(PermissionDenied):
+        view_fn(req2)
+
+    assert captured == []
+
+
+def test_connect_view_sync_dispatch_zero_sent_with_failed_logs_failure(captured):
+    django = pytest.importorskip("django")
+    assert django is not None
+    from django.contrib.messages.storage.fallback import FallbackStorage
+    from django.http import HttpResponseRedirect
+    from django.test import RequestFactory
+
+    from veditor.views import ConnectView
+
+    rf = RequestFactory()
+    event = SimpleNamespace(
+        id=42,
+        slug="conf-42",
+        organizer=SimpleNamespace(slug="org-42"),
+        settings=SimpleNamespace(get=lambda k, d=None: d),
+    )
+    user = MagicMock()
+    user.is_authenticated = True
+    user.pk = 7
+
+    req = rf.post(
+        "/common/event/org-42/conf-42/veditor/",
+        data={"action": "resend_speaker_link", "talk_id": "101"},
+    )
+    req.user = user
+    req.event = event
+    req.organizer = event.organizer
+    req.session = {}
+    req._messages = FallbackStorage(req)
+
+    view = ConnectView()
+    failed_result = {
+        "status": "skipped",
+        "sent_count": 0,
+        "failed": [{"speaker": "NoEmail", "error": "missing_email"}],
+    }
+    mock_task = MagicMock(return_value=failed_result)
+    mock_task.delay.side_effect = RuntimeError("celery down")
+    with (
+        patch("veditor.views.reverse", return_value="/common/event/org-42/conf-42/veditor/"),
+        patch("veditor.views.redirect", side_effect=HttpResponseRedirect),
+        patch("veditor.views.process_talk_approved", mock_task),
+    ):
+        resp = view.post(req)
+
+    assert resp.status_code == 302
+    assert captured[-1][1] == "review_link.dispatch"
+    assert captured[-1][2]["outcome"] == "failure"
+    assert captured[-1][2]["error_code"] == "dispatch_failed"
