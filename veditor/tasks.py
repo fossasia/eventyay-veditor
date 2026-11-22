@@ -209,9 +209,10 @@ def process_talk_approved(
 
         for speaker in speakers:
             speaker_email = getattr(speaker, "email", None)
+            speaker_pk = getattr(speaker, "pk", None) or getattr(speaker, "id", None)
             if not speaker_email:
                 speaker_name = getattr(speaker, "fullname", None) or getattr(speaker, "name", None) or str(speaker)
-                logger.warning("Speaker %s has no email address, skipping", speaker_name)
+                logger.warning("Speaker (id=%s) for submission %s has no email address, skipping", speaker_pk, submission.code)
                 missing_email_speakers.append(speaker_name)
                 continue
 
@@ -221,12 +222,12 @@ def process_talk_approved(
 
             # Prevent duplicate email to already-sent speaker on Celery task retry
             if task_sent_key and cache.get(task_sent_key):
-                logger.info("Speaker review already dispatched to %s in current task run, skipping", speaker_email)
+                logger.info("Speaker review already dispatched for speaker_id=%s in current task run, skipping", speaker_pk)
                 skipped_recipients.append(speaker_email)
                 continue
 
             if not force and cache.get(delivery_key):
-                logger.info("Speaker review already dispatched to %s, skipping", speaker_email)
+                logger.info("Speaker review already dispatched for speaker_id=%s, skipping", speaker_pk)
                 skipped_recipients.append(speaker_email)
                 continue
 
@@ -257,12 +258,13 @@ def process_talk_approved(
                 )
             except VEditorNetworkError:
                 logger.warning(
-                    "Transient network failure requesting SSO token for %s; triggering retry",
-                    speaker_email,
+                    "Transient network failure requesting SSO token for talk %s (speaker_id=%s); triggering retry",
+                    resolved_talk_id,
+                    speaker_pk,
                 )
                 raise
             except (VEditorError, ValueError) as exc:
-                logger.exception("Failed to generate speaker SSO token for %s: %s", speaker_email, exc)
+                logger.exception("Failed to generate speaker SSO token for talk %s (speaker_id=%s): %s", resolved_talk_id, speaker_pk, exc)
                 failed_recipients.append({"email": speaker_email, "error": str(exc)})
                 continue
 
@@ -317,7 +319,7 @@ def process_talk_approved(
             cache.set(delivery_key, True, timeout=86400 * 7)
 
             sent_recipients.append(speaker_email)
-            logger.info("Dispatched speaker review magic link for talk %s to %s", resolved_talk_id, speaker_email)
+            logger.info("Dispatched speaker review magic link for talk %s (speaker_id=%s)", resolved_talk_id, speaker_pk)
 
         for s_name in missing_email_speakers:
             failed_recipients.append({"speaker": s_name, "error": "missing_email"})
@@ -351,15 +353,17 @@ def process_talk_approved(
 
 @task_decorator(
     name="veditor.process_talk_published",
+    bind=True,
     autoretry_for=(DatabaseError,),
     retry_backoff=True,
     max_retries=5,
 )
 @traced_job("veditor.talk_published")
 def process_talk_published(
-    event_id: int | str,
-    talk_id: int | str,
-    video_url: str,
+    self: Any = None,
+    event_id: int | str | None = None,
+    talk_id: int | str = "",
+    video_url: str = "",
     external_id: str | None = None,
     raw_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -368,15 +372,18 @@ def process_talk_published(
     Attaches or updates the video recording resource on the Eventyay submission
     and marks the recording as ready for the public schedule.
     """
+    if self is not None and not hasattr(self, "request") and event_id is None:
+        event_id = self
+        self = None
+
     logger.info(
-        "Processing talk.published for event_id=%s, talk_id=%s, external_id=%s, video_url=%s",
+        "Processing talk.published for event_id=%s, talk_id=%s, external_id=%s",
         event_id,
         talk_id,
         external_id,
-        video_url,
     )
     if not video_url or not isinstance(video_url, str) or not video_url.strip():
-        logger.warning("Empty or invalid video_url received for talk.published: %r", video_url)
+        logger.warning("Empty or invalid video_url received for talk.published: event_id=%s, talk_id=%s", event_id, talk_id)
         return {
             "status": "error",
             "message": "Missing or invalid video_url",
@@ -388,7 +395,7 @@ def process_talk_published(
     parsed_video = urlparse(video_url)
     is_relative = (video_url.startswith("/") and not video_url.startswith("//")) or (not parsed_video.scheme and not parsed_video.netloc)
     if (parsed_video.scheme not in ("http", "https") or not parsed_video.netloc) and not is_relative:
-        logger.warning("Empty or invalid video_url received for talk.published: %r", video_url)
+        logger.warning("Empty or invalid video_url received for talk.published: event_id=%s, talk_id=%s", event_id, talk_id)
         return {
             "status": "error",
             "message": "Missing or invalid video_url scheme/host",
@@ -452,10 +459,9 @@ def process_talk_published(
 
             if parsed_video.scheme not in ("http", "https") or not parsed_video.netloc:
                 logger.warning(
-                    "Rejected talk.published in task due to unresolvable video_url: event_id=%s, talk_id=%s, video_url=%r",
+                    "Rejected talk.published in task due to unresolvable video_url: event_id=%s, talk_id=%s",
                     event_id,
                     talk_id,
-                    video_url,
                 )
                 return {
                     "status": "error",
@@ -624,13 +630,21 @@ def process_talk_published(
 
 @task_decorator(
     name="veditor.sync_event_schedule",
+    bind=True,
     autoretry_for=(VEditorNetworkError,),
     retry_backoff=True,
     max_retries=3,
 )
-def sync_event_schedule_task(event_id: int | str) -> dict[str, Any]:
+@traced_job("veditor.sync_event_schedule")
+def sync_event_schedule_task(self: Any = None, event_id: int | str | None = None) -> dict[str, Any]:
     """Background task to sync event metadata and talk schedule to VEditor upon schedule release."""
+    if self is not None and not hasattr(self, "request") and event_id is None:
+        event_id = self
+        self = None
+
     logger.info("Executing sync_event_schedule_task for event_id=%s", event_id)
+    if event_id is None or event_id == "":
+        return {"status": "not_found", "message": f"Event {event_id} not found"}
     with scopes_disabled():
         if Event is None:
             return {"status": "error", "message": "Event model unavailable"}

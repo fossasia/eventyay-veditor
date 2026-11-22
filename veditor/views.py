@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import tzinfo
 from typing import Any
 from urllib.parse import urlencode, urlparse
+from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.contrib import messages
@@ -31,10 +33,26 @@ from eventyay.control.permissions import EventPermissionRequiredMixin
 from .client import VEditorClient
 from .exceptions import VEditorConfigError, VEditorError
 from .forms import RoomRecordingAttachmentForm, VEditorSettingsForm
-from .operational_log import OUTCOME_FAILURE, log_operation
+from .operational_log import OUTCOME_FAILURE, OUTCOME_SUCCESS, log_operation
 from .tasks import process_talk_approved
 
 logger = logging.getLogger(__name__)
+
+
+def _event_log_id(event: Any) -> int | str | None:
+    if event is None:
+        return None
+    return getattr(event, "pk", None) or getattr(event, "id", None) or getattr(event, "slug", None)
+
+
+def _user_log_id(request: Any) -> int | None:
+    user = getattr(request, "user", None)
+    if not user:
+        return None
+    uid = getattr(user, "pk", None) or getattr(user, "id", None)
+    if isinstance(uid, int) and not isinstance(uid, bool):
+        return uid
+    return None
 
 
 class ConnectView(EventPermissionRequiredMixin, TemplateView):
@@ -113,9 +131,6 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
         tz_val = getattr(event, "timezone", None)
         event_tz = None
         if tz_val:
-            from datetime import tzinfo
-            from zoneinfo import ZoneInfo
-
             if isinstance(tz_val, tzinfo):
                 event_tz = tz_val
             elif isinstance(tz_val, str):
@@ -185,15 +200,7 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
 
         rooms_list = []
         if hasattr(event, "rooms"):
-            try:
-                from django_scopes import scope
-            except ImportError:
-                scope = None
-
-            if scope:
-                with scope(event=event):
-                    rooms_list = list(event.rooms.all().order_by("name"))
-            else:
+            with scope(event=event):
                 rooms_list = list(event.rooms.all().order_by("name"))
         context["rooms"] = rooms_list
         context["rooms_count"] = len(rooms_list)
@@ -261,6 +268,8 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
     def post(self, request, *args, **kwargs):
         """Handle saving settings or executing talk synchronization and redirect."""
         event = request.event
+        event_id = _event_log_id(event)
+        user_id = _user_log_id(request)
         action = request.POST.get("action")
         saved_key = (event.settings.get("veditor_api_key") if hasattr(event, "settings") else None) or os.environ.get("VEDITOR_API_KEY")
         has_saved_key = bool(saved_key)
@@ -295,6 +304,7 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                         else:
                             event.settings.set("speaker_review_window_days", 7)
 
+                log_operation("settings.save", OUTCOME_SUCCESS, backend="veditor", event_id=event_id, user_id=user_id)
                 messages.success(request, _("VEditor connection settings saved successfully."))
                 return redirect(
                     reverse(
@@ -303,6 +313,14 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                     )
                 )
             else:
+                log_operation(
+                    "settings.save",
+                    OUTCOME_FAILURE,
+                    backend="veditor",
+                    error_code="invalid_form",
+                    event_id=event_id,
+                    user_id=user_id,
+                )
                 context = self.get_context_data(**kwargs)
                 context["form"] = form
                 return self.render_to_response(context)
@@ -315,12 +333,21 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                 target_event_id = (sync_res.get("id") if isinstance(sync_res, dict) else None) or client.get_scoped_event_id()
                 res = client.sync_talks(event_id=target_event_id, talk_slots=talk_slots)
                 imported_count = res.get("imported_count", len(talk_slots)) if isinstance(res, dict) else len(talk_slots)
+                log_operation("schedule.sync", OUTCOME_SUCCESS, backend="veditor", event_id=event_id, user_id=user_id)
                 messages.success(
                     request,
                     _("Successfully synchronized {count} talk(s) with VEditor.").format(count=imported_count),
                 )
             except (VEditorError, ValueError) as exc:
                 logger.error("Failed to synchronize talks for event %s: %s", event.slug, exc)
+                log_operation(
+                    "schedule.sync",
+                    OUTCOME_FAILURE,
+                    backend="veditor",
+                    error_code="sync_failed",
+                    event_id=event_id,
+                    user_id=user_id,
+                )
                 messages.error(
                     request,
                     _("Failed to synchronize talks with VEditor: {error}").format(error=str(exc)),
@@ -352,6 +379,14 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                         client.sync_talks(event_id=target_event_id, talk_slots=talk_slots)
                     except (VEditorError, ValueError) as sync_exc:
                         logger.error("Auto-sync prior to room attachment failed for %s: %s", room_name, sync_exc)
+                        log_operation(
+                            "recording.attach",
+                            OUTCOME_FAILURE,
+                            backend="veditor",
+                            error_code="sync_failed",
+                            event_id=event_id,
+                            user_id=user_id,
+                        )
                         messages.error(
                             request,
                             _("Failed to synchronize schedule prior to attaching recording: {error}").format(error=str(sync_exc)),
@@ -387,9 +422,18 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                         msg = _("Successfully attached room recording for room '{room}'. {count} talk(s) matched and queued for detection and cutting.").format(
                             room=room_name, count=attached_count
                         )
+                    log_operation("recording.attach", OUTCOME_SUCCESS, backend="veditor", event_id=event_id, user_id=user_id)
                     messages.success(request, msg)
                 except (VEditorError, ValueError) as exc:
                     logger.error("Failed attaching room recording for room %s: %s", room_name, exc)
+                    log_operation(
+                        "recording.attach",
+                        OUTCOME_FAILURE,
+                        backend="veditor",
+                        error_code="attach_failed",
+                        event_id=event_id,
+                        user_id=user_id,
+                    )
                     messages.error(
                         request,
                         _("Failed to attach room recording: {error}").format(error=str(exc)),
@@ -402,6 +446,14 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                     )
                 )
             else:
+                log_operation(
+                    "recording.attach",
+                    OUTCOME_FAILURE,
+                    backend="veditor",
+                    error_code="invalid_form",
+                    event_id=event_id,
+                    user_id=user_id,
+                )
                 context = self.get_context_data(**kwargs)
                 context["room_form"] = room_form
                 return self.render_to_response(context)
@@ -409,14 +461,15 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
         elif action == "resend_speaker_link":
             talk_id = request.POST.get("talk_id")
             external_id = request.POST.get("external_id") or request.POST.get("submission_code")
+            dispatch_object_id = talk_id or external_id
             if not external_id and not talk_id:
                 log_operation(
-                    "job.fail",
+                    "review_link.dispatch",
                     OUTCOME_FAILURE,
                     backend="veditor",
                     error_code="missing_talk",
-                    event_id=getattr(event, "pk", None),
-                    job_name="veditor.talk_approved",
+                    event_id=event_id,
+                    user_id=user_id,
                 )
                 messages.error(request, _("No talk selected for speaker review link dispatch."))
                 return redirect(
@@ -434,6 +487,16 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                         external_id=external_id,
                         force=True,
                     )
+                    dispatch_failed = isinstance(result, dict) and result.get("status") == "error"
+                    log_operation(
+                        "review_link.dispatch",
+                        OUTCOME_FAILURE if dispatch_failed else OUTCOME_SUCCESS,
+                        backend="veditor",
+                        error_code="dispatch_failed" if dispatch_failed else None,
+                        event_id=event_id,
+                        object_id=dispatch_object_id,
+                        user_id=user_id,
+                    )
                     self._display_dispatch_result(request, result)
                     return redirect(
                         reverse(
@@ -444,12 +507,13 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                 except Exception as exc:
                     logger.warning("Direct dispatch failed, falling back to celery: %s", exc)
                     log_operation(
-                        "job.fail",
+                        "review_link.dispatch",
                         OUTCOME_FAILURE,
                         backend="veditor",
                         error_code="direct_dispatch_failed",
-                        event_id=getattr(event, "pk", None),
-                        job_name="veditor.talk_approved",
+                        event_id=event_id,
+                        object_id=dispatch_object_id,
+                        user_id=user_id,
                     )
 
             try:
@@ -458,6 +522,14 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                     talk_id=talk_id or external_id,
                     external_id=external_id,
                     force=True,
+                )
+                log_operation(
+                    "review_link.dispatch",
+                    OUTCOME_SUCCESS,
+                    backend="veditor",
+                    event_id=event_id,
+                    object_id=dispatch_object_id,
+                    user_id=user_id,
                 )
                 messages.success(request, _("Speaker review link has been queued for dispatch."))
             except Exception:
@@ -471,18 +543,29 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                 except Exception as exc:
                     logger.exception("Speaker review dispatch failed: %s", exc)
                     log_operation(
-                        "job.fail",
+                        "review_link.dispatch",
                         OUTCOME_FAILURE,
                         backend="veditor",
                         error_code="dispatch_failed",
-                        event_id=getattr(event, "pk", None),
-                        job_name="veditor.talk_approved",
+                        event_id=event_id,
+                        object_id=dispatch_object_id,
+                        user_id=user_id,
                     )
                     messages.error(
                         request,
                         _("Failed to dispatch speaker review link: {error}").format(error=str(exc)),
                     )
                 else:
+                    dispatch_failed = isinstance(result, dict) and result.get("status") == "error"
+                    log_operation(
+                        "review_link.dispatch",
+                        OUTCOME_FAILURE if dispatch_failed else OUTCOME_SUCCESS,
+                        backend="veditor",
+                        error_code="dispatch_failed" if dispatch_failed else None,
+                        event_id=event_id,
+                        object_id=dispatch_object_id,
+                        user_id=user_id,
+                    )
                     self._display_dispatch_result(request, result)
 
             return redirect(
@@ -505,7 +588,8 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                 OUTCOME_FAILURE,
                 backend="veditor",
                 error_code="connect_failed",
-                event_id=getattr(event, "pk", None),
+                event_id=event_id,
+                user_id=user_id,
             )
             messages.error(
                 request,
@@ -524,7 +608,8 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
                     OUTCOME_FAILURE,
                     backend="veditor",
                     error_code="sync_failed",
-                    event_id=getattr(event, "pk", None),
+                    event_id=event_id,
+                    user_id=user_id,
                 )
                 messages.error(
                     request,
@@ -554,14 +639,16 @@ class ConnectView(EventPermissionRequiredMixin, TemplateView):
             # mitigating exposure in browser history and logs.
             query_params = urlencode({"event_id": str(target_event_id), "sso_token": token})
             redirect_url = f"{client.base_url}/studio?{query_params}"
+            log_operation("sso.launch", OUTCOME_SUCCESS, backend="veditor", event_id=event_id, user_id=user_id)
             return HttpResponseRedirect(redirect_url)
         except (VEditorError, ValueError) as exc:
             log_operation(
-                "connection.request",
+                "sso.launch",
                 OUTCOME_FAILURE,
                 backend="veditor",
                 error_code="sso_failed",
-                event_id=getattr(event, "pk", None),
+                event_id=event_id,
+                user_id=user_id,
             )
             messages.error(
                 request,
@@ -606,6 +693,7 @@ class SpeakerReviewLaunchView(LoginRequiredMixin, View):
         event_slug = kwargs.get("event")
         organizer_slug = kwargs.get("organizer")
         talk_code = kwargs.get("talk_code") or kwargs.get("code")
+        user_id = _user_log_id(request)
 
         event_obj = getattr(request, "event", None)
         if not event_obj and Event is not None:
@@ -615,8 +703,18 @@ class SpeakerReviewLaunchView(LoginRequiredMixin, View):
                     event_obj = Event.objects.filter(id=int(event_slug), organizer__slug=organizer_slug).first()
 
         if not event_obj:
+            log_operation(
+                "review_link.launch",
+                OUTCOME_FAILURE,
+                backend="veditor",
+                error_code="event_not_found",
+                event_id=event_slug,
+                object_id=talk_code,
+                user_id=user_id,
+            )
             raise Http404(_("Event not found."))
 
+        event_id = _event_log_id(event_obj)
         submission = getattr(request, "submission", None)
         if not submission:
             try:
@@ -631,10 +729,20 @@ class SpeakerReviewLaunchView(LoginRequiredMixin, View):
                 logger.debug("Could not query submission from database: %s", db_exc)
 
         if not submission:
+            log_operation(
+                "review_link.launch",
+                OUTCOME_FAILURE,
+                backend="veditor",
+                error_code="submission_not_found",
+                event_id=event_id,
+                object_id=talk_code,
+                user_id=user_id,
+            )
             raise Http404(_("Talk submission not found."))
 
         user = request.user
         user_email = (getattr(user, "email", None) or "").strip().lower()
+        submission_code = getattr(submission, "code", talk_code)
 
         is_speaker = False
         speakers_attr = getattr(submission, "speakers", None)
@@ -654,10 +762,28 @@ class SpeakerReviewLaunchView(LoginRequiredMixin, View):
         )
 
         if not is_speaker and not has_event_perm:
+            log_operation(
+                "permission.denied",
+                OUTCOME_FAILURE,
+                backend="veditor",
+                error_code="forbidden",
+                event_id=event_id,
+                object_id=submission_code,
+                user_id=user_id,
+            )
             raise PermissionDenied(_("You do not have permission to review this session."))
 
         # Strict state check: only confirmed sessions can be reviewed
         if getattr(submission, "state", None) != "confirmed":
+            log_operation(
+                "review_link.launch",
+                OUTCOME_FAILURE,
+                backend="veditor",
+                error_code="unconfirmed_submission",
+                event_id=event_id,
+                object_id=submission_code,
+                user_id=user_id,
+            )
             messages.warning(
                 request,
                 _("Video review is only available for confirmed sessions on the event schedule."),
@@ -668,6 +794,15 @@ class SpeakerReviewLaunchView(LoginRequiredMixin, View):
             client = VEditorClient(event=event_obj)
         except VEditorConfigError as exc:
             logger.warning("VEditor client configuration error for %s: %s", getattr(event_obj, "slug", ""), exc)
+            log_operation(
+                "review_link.launch",
+                OUTCOME_FAILURE,
+                backend="veditor",
+                error_code="not_configured",
+                event_id=event_id,
+                object_id=submission_code,
+                user_id=user_id,
+            )
             messages.error(
                 request,
                 _("Video review is not configured for this event. Please contact the event organizer."),
@@ -687,8 +822,6 @@ class SpeakerReviewLaunchView(LoginRequiredMixin, View):
         if not display_name and hasattr(user, "get_display_name"):
             display_name = user.get_display_name()
         display_name = display_name or user_email
-
-        submission_code = getattr(submission, "code", talk_code)
 
         try:
             sso_res = client.request_sso_jwt(
@@ -711,6 +844,15 @@ class SpeakerReviewLaunchView(LoginRequiredMixin, View):
                     "Failed to request speaker SSO JWT for submission %s: %s",
                     submission_code,
                     exc,
+                )
+                log_operation(
+                    "review_link.launch",
+                    OUTCOME_FAILURE,
+                    backend="veditor",
+                    error_code="sso_failed",
+                    event_id=event_id,
+                    object_id=submission_code,
+                    user_id=user_id,
                 )
                 messages.error(
                     request,
@@ -745,6 +887,15 @@ class SpeakerReviewLaunchView(LoginRequiredMixin, View):
                     submission_code,
                     exc,
                     retry_exc,
+                )
+                log_operation(
+                    "review_link.launch",
+                    OUTCOME_FAILURE,
+                    backend="veditor",
+                    error_code="sso_retry_failed",
+                    event_id=event_id,
+                    object_id=submission_code,
+                    user_id=user_id,
                 )
                 messages.error(
                     request,
@@ -786,4 +937,12 @@ class SpeakerReviewLaunchView(LoginRequiredMixin, View):
             query = urlencode({"sso_token": token})
             redirect_url = f"{client.base_url}/studio/talks/{submission_code}?{query}"
 
+        log_operation(
+            "review_link.launch",
+            OUTCOME_SUCCESS,
+            backend="veditor",
+            event_id=event_id,
+            object_id=submission_code,
+            user_id=user_id,
+        )
         return HttpResponseRedirect(redirect_url)

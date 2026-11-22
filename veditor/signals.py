@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import logging
 
+from django.conf import settings
 from django.db import transaction
 from django.dispatch import receiver
 from django.urls import resolve, reverse
 from django.utils.translation import gettext_lazy as _
 from eventyay.control.signals import nav_event_common
+
+from .operational_log import OUTCOME_FAILURE, OUTCOME_SUCCESS, log_operation
 
 logger = logging.getLogger(__name__)
 
@@ -113,18 +116,18 @@ if schedule_release is not None:
         if not event_id:
             return
 
-        from django.conf import settings
-
         def _dispatch_sync() -> None:
             if getattr(settings, "DEBUG", False):
                 try:
                     sync_event_schedule_task(event_id=event_id)
+                    log_operation("schedule_sync.dispatch", OUTCOME_SUCCESS, backend="veditor", event_id=event_id)
                     return
                 except Exception as exc:
                     logger.warning("Inline sync_event_schedule_task failed for event %s: %s", event_id, exc)
 
             try:
                 sync_event_schedule_task.delay(event_id=event_id)
+                log_operation("schedule_sync.dispatch", OUTCOME_SUCCESS, backend="veditor", event_id=event_id)
             except Exception as delay_exc:
                 logger.warning(
                     "Failed to enqueue sync_event_schedule_task.delay for %s: %s. Falling back to synchronous execution.",
@@ -133,7 +136,15 @@ if schedule_release is not None:
                 )
                 try:
                     sync_event_schedule_task(event_id=event_id)
+                    log_operation("schedule_sync.dispatch", OUTCOME_SUCCESS, backend="veditor", event_id=event_id)
                 except Exception as sync_exc:
                     logger.warning("Synchronous fallback for sync_event_schedule_task failed for %s: %s", event_id, sync_exc)
+                    log_operation(
+                        "schedule_sync.dispatch",
+                        OUTCOME_FAILURE,
+                        backend="veditor",
+                        error_code="dispatch_failed",
+                        event_id=event_id,
+                    )
 
         transaction.on_commit(_dispatch_sync)

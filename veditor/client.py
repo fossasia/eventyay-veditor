@@ -205,20 +205,41 @@ class VEditorClient:
             req_headers["Content-Type"] = None
             kwargs["headers"] = req_headers
 
+        event_id = None
+        if self.event is not None:
+            event_id = getattr(self.event, "pk", None) or getattr(self.event, "id", None) or getattr(self.event, "slug", None)
+
         started = time.monotonic()
         try:
             response = self.session.request(method=method, url=url, **kwargs)
         except (requests.exceptions.Timeout, requests.exceptions.ConnectTimeout) as exc:
-            log_operation("connection.request", OUTCOME_FAILURE, backend="veditor", error_code="timeout", duration_ms=int((time.monotonic() - started) * 1000))
+            log_operation(
+                "connection.request",
+                OUTCOME_FAILURE,
+                backend="veditor",
+                error_code="timeout",
+                event_id=event_id,
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
             raise VEditorNetworkError(f"VEditor request timed out: {exc}") from exc
         except (requests.exceptions.ConnectionError, requests.exceptions.ProxyError) as exc:
             log_operation(
-                "connection.request", OUTCOME_FAILURE, backend="veditor", error_code="connection_error", duration_ms=int((time.monotonic() - started) * 1000)
+                "connection.request",
+                OUTCOME_FAILURE,
+                backend="veditor",
+                error_code="connection_error",
+                event_id=event_id,
+                duration_ms=int((time.monotonic() - started) * 1000),
             )
             raise VEditorNetworkError(f"Failed to connect to VEditor at {self.base_url}: {exc}") from exc
         except requests.exceptions.RequestException as exc:
             log_operation(
-                "connection.request", OUTCOME_FAILURE, backend="veditor", error_code="request_error", duration_ms=int((time.monotonic() - started) * 1000)
+                "connection.request",
+                OUTCOME_FAILURE,
+                backend="veditor",
+                error_code="request_error",
+                event_id=event_id,
+                duration_ms=int((time.monotonic() - started) * 1000),
             )
             raise VEditorNetworkError(f"VEditor network transport error: {exc}") from exc
 
@@ -227,6 +248,7 @@ class VEditorClient:
             "connection.request",
             OUTCOME_FAILURE if failed else OUTCOME_SUCCESS,
             backend="veditor",
+            event_id=event_id,
             status=response.status_code,
             duration_ms=int((time.monotonic() - started) * 1000),
             error_code="http_error" if failed else None,
