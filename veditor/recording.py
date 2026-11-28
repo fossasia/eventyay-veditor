@@ -67,7 +67,7 @@ class VEditorRecordingProvider(BaseRecordingProvider):
                 logger.debug(
                     "Error looking up resources for submission %s: %s",
                     getattr(submission, "code", None),
-                    exc,
+                    type(exc).__name__,
                 )
 
         if not video_url:
@@ -79,7 +79,7 @@ class VEditorRecordingProvider(BaseRecordingProvider):
         video_url = str(video_url).strip()
         parsed = urlparse(video_url)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            logger.warning("Rejected invalid recording URL scheme or netloc: %s", video_url)
+            logger.warning("Rejected invalid recording URL scheme or netloc for submission %s", getattr(submission, "code", None))
             return {}
 
         escaped_url = html.escape(video_url)

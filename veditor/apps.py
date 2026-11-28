@@ -1,6 +1,7 @@
 from django.utils.translation import gettext_lazy as _
 
 from . import __version__
+from .operational_log import log_plugin_loaded
 
 try:
     from eventyay.base.plugins import PluginConfig
@@ -26,3 +27,5 @@ class VeditorApp(PluginConfig):
             signals,  # noqa: F401 — registers signal receivers
             tasks,  # noqa: F401 — registers Celery tasks
         )
+
+        log_plugin_loaded("veditor")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from datetime import date, datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -24,6 +25,7 @@ from .exceptions import (
     VEditorSyncError,
 )
 from .mappers import serialize_event, serialize_talk, serialize_talks
+from .operational_log import OUTCOME_FAILURE, OUTCOME_SUCCESS, log_operation
 
 
 class VEditorClient:
@@ -203,15 +205,54 @@ class VEditorClient:
             req_headers["Content-Type"] = None
             kwargs["headers"] = req_headers
 
+        event_id = None
+        if self.event is not None:
+            event_id = getattr(self.event, "pk", None) or getattr(self.event, "id", None) or getattr(self.event, "slug", None)
+
+        started = time.monotonic()
         try:
             response = self.session.request(method=method, url=url, **kwargs)
         except (requests.exceptions.Timeout, requests.exceptions.ConnectTimeout) as exc:
+            log_operation(
+                "connection.request",
+                OUTCOME_FAILURE,
+                backend="veditor",
+                error_code="timeout",
+                event_id=event_id,
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
             raise VEditorNetworkError(f"VEditor request timed out: {exc}") from exc
         except (requests.exceptions.ConnectionError, requests.exceptions.ProxyError) as exc:
+            log_operation(
+                "connection.request",
+                OUTCOME_FAILURE,
+                backend="veditor",
+                error_code="connection_error",
+                event_id=event_id,
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
             raise VEditorNetworkError(f"Failed to connect to VEditor at {self.base_url}: {exc}") from exc
         except requests.exceptions.RequestException as exc:
+            log_operation(
+                "connection.request",
+                OUTCOME_FAILURE,
+                backend="veditor",
+                error_code="request_error",
+                event_id=event_id,
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
             raise VEditorNetworkError(f"VEditor network transport error: {exc}") from exc
 
+        failed = not (200 <= response.status_code < 300)
+        log_operation(
+            "connection.request",
+            OUTCOME_FAILURE if failed else OUTCOME_SUCCESS,
+            backend="veditor",
+            event_id=event_id,
+            status=response.status_code,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            error_code="http_error" if failed else None,
+        )
         return self._handle_response(response)
 
     def _handle_response(self, response: requests.Response) -> Any:
@@ -326,7 +367,7 @@ class VEditorClient:
             try:
                 event_id = self.get_scoped_event_id()
             except Exception as exc:
-                logger.debug("Could not resolve scoped event ID following event sync: %s", exc)
+                logger.debug("Could not resolve scoped event ID following event sync: %s", type(exc).__name__)
 
         if talk_slots is not None and event_id is not None:
             talks_result = self.sync_talks(event_id=event_id, talk_slots=talk_slots)
@@ -513,7 +554,7 @@ class VEditorClient:
             try:
                 event_id = self.get_scoped_event_id()
             except Exception as exc:
-                logger.debug("Could not auto-resolve scoped event ID: %s", exc)
+                logger.debug("Could not auto-resolve scoped event ID: %s", type(exc).__name__)
 
         rec_start_val: str | None = None
         if recording_start is not None:
